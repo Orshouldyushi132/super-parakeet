@@ -4,7 +4,7 @@ import math
 from bisect import bisect_right
 from dataclasses import dataclass
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from .models import Measure, MidiProject, RenderSettings
 
@@ -24,6 +24,15 @@ class _AnimationState:
     wave: float
     flicker: float
     lift: float
+    stepped: float
+    jitter: float
+
+
+@dataclass(slots=True)
+class _ActiveRenderItem:
+    rect: tuple[float, float, float, float]
+    radius: float
+    state: _AnimationState
 
 
 class ProjectRenderer:
@@ -54,6 +63,10 @@ class ProjectRenderer:
 
         image = Image.new("RGBA", (width, height), _with_alpha(settings.background_color, 255))
         draw = ImageDraw.Draw(image, "RGBA")
+        glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        glow_draw = ImageDraw.Draw(glow_layer, "RGBA")
+        crisp_glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        crisp_glow_draw = ImageDraw.Draw(crisp_glow_layer, "RGBA")
 
         left_padding = width * 0.045
         right_padding = width * 0.045
@@ -68,6 +81,8 @@ class ProjectRenderer:
         rectangle_height = max(2.0, lane_height * 0.6)
         min_rectangle_width = max(2.0, width * 0.001)
 
+        active_items: list[_ActiveRenderItem] = []
+
         for segment in note_segments:
             x0 = left_padding + plot_width * segment.start_ratio
             x1 = left_padding + plot_width * segment.end_ratio
@@ -81,9 +96,20 @@ class ProjectRenderer:
             rect = (x0, y0, x1, y1)
 
             if segment.note_start_sec <= clamped_time < segment.note_end_sec:
-                self._draw_active_segment(draw, rect, segment, clamped_time)
+                state = self._build_animation_state(segment, clamped_time)
+                animated_rect = self._animated_rect(rect, state)
+                radius = self._rect_radius(animated_rect)
+                active_items.append(_ActiveRenderItem(rect=animated_rect, radius=radius, state=state))
+                self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, radius, state)
             else:
                 self._draw_idle_segment(draw, rect)
+
+        glow_layer = self._finalize_glow_layer(glow_layer, width, height)
+        image.alpha_composite(glow_layer)
+        image.alpha_composite(crisp_glow_layer)
+
+        for item in active_items:
+            self._draw_active_segment(draw, item.rect, item.radius, item.state)
 
         return image.convert("RGB")
 
@@ -95,28 +121,22 @@ class ProjectRenderer:
         self,
         draw: ImageDraw.ImageDraw,
         rect: tuple[float, float, float, float],
-        segment: _VisibleSegment,
-        time_sec: float,
+        radius: float,
+        state: _AnimationState,
     ) -> None:
-        state = self._build_animation_state(segment, time_sec)
-        animated_rect = self._animated_rect(rect, state)
-        radius = self._rect_radius(animated_rect)
-
-        self._draw_glow(draw, animated_rect, radius, state)
-
         fill_color = self._active_fill_color(state)
-        draw.rounded_rectangle(animated_rect, radius=radius, fill=fill_color)
+        draw.rounded_rectangle(rect, radius=radius, fill=fill_color)
 
-        outline_alpha = 220 if self.settings.glow_style in {"neon", "outline", "prism"} else 170
-        outline_width = max(1, int((animated_rect[3] - animated_rect[1]) * 0.12))
+        outline_alpha = 225 if self.settings.glow_style in {"neon", "outline", "prism"} else 175
+        outline_width = max(1, int((rect[3] - rect[1]) * 0.12))
         draw.rounded_rectangle(
-            animated_rect,
+            rect,
             radius=radius,
             outline=_with_alpha(self.settings.outline_color, outline_alpha),
             width=outline_width,
         )
 
-        self._draw_animation_overlay(draw, animated_rect, radius, state)
+        self._draw_animation_overlay(draw, rect, radius, state)
 
     def _build_animation_state(self, segment: _VisibleSegment, time_sec: float) -> _AnimationState:
         duration = max(segment.note_end_sec - segment.note_start_sec, 1e-6)
@@ -127,7 +147,16 @@ class ProjectRenderer:
         wave = 0.5 + 0.5 * math.sin(cycle * math.tau)
         flicker = 0.35 + 0.65 * abs(math.sin((phase * (speed * 3.7 + 0.8) + seed) * math.tau))
         lift = math.sin(cycle * math.tau)
-        return _AnimationState(phase=phase, wave=wave, flicker=flicker, lift=lift)
+        stepped = round(wave * 3.0) / 3.0
+        jitter = round(math.sin((cycle * 4.5 + seed) * math.tau) * 2.0) / 2.0
+        return _AnimationState(
+            phase=phase,
+            wave=wave,
+            flicker=flicker,
+            lift=lift,
+            stepped=stepped,
+            jitter=jitter,
+        )
 
     def _animated_rect(
         self,
@@ -142,8 +171,23 @@ class ProjectRenderer:
         expand_x = 0.0
         expand_y = 0.0
         shift_y = 0.0
+        shift_x = 0.0
 
-        if style == "pulse":
+        if style == "blink":
+            expand_x = width * 0.05 * strength * state.stepped
+            expand_y = height * 0.12 * strength * state.stepped
+        elif style == "pop":
+            expand_x = width * 0.12 * strength * state.stepped
+            expand_y = height * 0.28 * strength * state.stepped
+        elif style == "scan":
+            expand_y = height * 0.1 * strength * (0.4 + state.stepped)
+        elif style == "jitter":
+            shift_x = width * 0.03 * strength * state.jitter
+            shift_y = -height * 0.14 * strength * state.jitter
+        elif style == "arcade":
+            shift_y = -height * 0.08 * strength * (1.0 if state.stepped > 0.5 else 0.0)
+            expand_x = width * 0.04 * strength * state.stepped
+        elif style == "pulse":
             expand_x = width * 0.08 * strength * (0.35 + state.wave)
             expand_y = height * 0.22 * strength * (0.35 + state.wave)
         elif style == "breathe":
@@ -164,11 +208,12 @@ class ProjectRenderer:
             shift_y = -height * 0.12 * strength * state.lift
 
         animated_rect = _expand_rect(rect, expand_x, expand_y)
-        return _offset_rect(animated_rect, 0.0, shift_y)
+        return _offset_rect(animated_rect, shift_x, shift_y)
 
     def _draw_glow(
         self,
-        draw: ImageDraw.ImageDraw,
+        glow_draw: ImageDraw.ImageDraw,
+        crisp_glow_draw: ImageDraw.ImageDraw,
         rect: tuple[float, float, float, float],
         radius: float,
         state: _AnimationState,
@@ -179,27 +224,52 @@ class ProjectRenderer:
             return
 
         height = rect[3] - rect[1]
-        base_alpha = int(150 * _clamp(0.35 + strength))
+        base_alpha = int(165 * _clamp(0.3 + strength))
 
         if style == "soft":
-            for scale, alpha_scale in ((0.35, 0.55), (0.7, 0.28), (1.05, 0.12)):
+            for scale, alpha_scale in ((0.4, 0.55), (0.85, 0.3), (1.25, 0.16)):
                 expansion = height * strength * scale
-                draw.rounded_rectangle(
+                glow_draw.rounded_rectangle(
                     _expand_rect(rect, expansion, expansion),
                     radius=radius + expansion,
                     fill=_with_alpha(self.settings.glow_color, int(base_alpha * alpha_scale)),
                 )
             return
 
-        if style == "neon":
-            for scale, alpha_scale in ((0.18, 0.75), (0.45, 0.36), (0.85, 0.16)):
+        if style == "mist":
+            for scale, alpha_scale in ((0.7, 0.44), (1.25, 0.28), (1.9, 0.18), (2.6, 0.1)):
                 expansion = height * strength * scale
-                draw.rounded_rectangle(
+                glow_draw.rounded_rectangle(
+                    _expand_rect(rect, expansion, expansion * 1.2),
+                    radius=radius + expansion,
+                    fill=_with_alpha(self.settings.glow_color, int(base_alpha * alpha_scale)),
+                )
+            return
+
+        if style == "bloom":
+            for scale, alpha_scale in ((0.55, 0.5), (1.1, 0.34), (1.85, 0.22), (2.8, 0.12)):
+                expansion = height * strength * scale
+                glow_draw.rounded_rectangle(
+                    _expand_rect(rect, expansion * 1.1, expansion * 1.25),
+                    radius=radius + expansion,
+                    fill=_with_alpha(self.settings.glow_color, int(base_alpha * alpha_scale)),
+                )
+            crisp_glow_draw.rounded_rectangle(
+                _expand_rect(rect, height * 0.05, height * 0.05),
+                radius=radius + height * 0.05,
+                fill=_with_alpha(self.settings.active_note_color, 54),
+            )
+            return
+
+        if style == "neon":
+            for scale, alpha_scale in ((0.2, 0.75), (0.55, 0.38), (1.0, 0.18)):
+                expansion = height * strength * scale
+                glow_draw.rounded_rectangle(
                     _expand_rect(rect, expansion, expansion),
                     radius=radius + expansion,
                     fill=_with_alpha(self.settings.glow_color, int(base_alpha * alpha_scale)),
                 )
-            draw.rounded_rectangle(
+            crisp_glow_draw.rounded_rectangle(
                 rect,
                 radius=radius,
                 outline=_with_alpha(self.settings.outline_color, 235),
@@ -214,34 +284,39 @@ class ProjectRenderer:
                 self.settings.glow_color,
             )
             for index, color in enumerate(aura_colors):
-                expansion = height * strength * (0.22 + index * 0.28 + state.wave * 0.12)
-                draw.rounded_rectangle(
+                expansion = height * strength * (0.3 + index * 0.4 + state.wave * 0.15)
+                glow_draw.rounded_rectangle(
                     _expand_rect(rect, expansion, expansion),
                     radius=radius + expansion,
-                    fill=_with_alpha(color, int(base_alpha / (1.0 + index * 1.1))),
+                    fill=_with_alpha(color, int(base_alpha / (1.0 + index * 1.15))),
                 )
             return
 
         if style == "outline":
-            expansion = height * strength * 0.14
-            draw.rounded_rectangle(
+            expansion = height * strength * 0.18
+            crisp_glow_draw.rounded_rectangle(
                 _expand_rect(rect, expansion, expansion),
                 radius=radius + expansion,
-                outline=_with_alpha(self.settings.outline_color, 225),
+                outline=_with_alpha(self.settings.outline_color, 220),
                 width=max(1, int(height * 0.18)),
+            )
+            glow_draw.rounded_rectangle(
+                _expand_rect(rect, expansion * 1.4, expansion * 1.4),
+                radius=radius + expansion * 1.4,
+                fill=_with_alpha(self.settings.glow_color, 60),
             )
             return
 
         if style == "shadow":
-            shadow_offset = height * strength * 0.34
-            for index, alpha in enumerate((90, 42)):
-                expansion = height * strength * (0.14 + index * 0.18)
+            shadow_offset = height * strength * 0.38
+            for index, alpha in enumerate((90, 54, 28)):
+                expansion = height * strength * (0.18 + index * 0.22)
                 shadow_rect = _offset_rect(
                     _expand_rect(rect, expansion, expansion),
-                    shadow_offset * (0.8 + index * 0.25),
-                    shadow_offset * (0.8 + index * 0.25),
+                    shadow_offset * (0.8 + index * 0.18),
+                    shadow_offset * (0.8 + index * 0.18),
                 )
-                draw.rounded_rectangle(
+                glow_draw.rounded_rectangle(
                     shadow_rect,
                     radius=radius + expansion,
                     fill=_with_alpha(self.settings.glow_color, alpha),
@@ -250,24 +325,74 @@ class ProjectRenderer:
 
         if style == "prism":
             prism_layers = (
-                (self.settings.glow_color, 0.2, 0.7),
-                (self.settings.animation_accent_color, 0.48, 0.38),
-                (self.settings.outline_color, 0.9, 0.18),
+                (self.settings.glow_color, 0.28, 0.64),
+                (self.settings.animation_accent_color, 0.7, 0.32),
+                (self.settings.outline_color, 1.18, 0.16),
             )
             for color, scale, alpha_scale in prism_layers:
                 expansion = height * strength * (scale + state.wave * 0.08)
-                draw.rounded_rectangle(
+                glow_draw.rounded_rectangle(
                     _expand_rect(rect, expansion, expansion),
                     radius=radius + expansion,
                     fill=_with_alpha(color, int(base_alpha * alpha_scale)),
                 )
+            crisp_glow_draw.rounded_rectangle(
+                rect,
+                radius=radius,
+                outline=_with_alpha(self.settings.outline_color, 205),
+                width=max(1, int(height * 0.1)),
+            )
+
+    def _finalize_glow_layer(self, glow_layer: Image.Image, width: int, height: int) -> Image.Image:
+        style = self.settings.glow_style
+        strength = self.settings.glow_strength
+        if style == "none" or strength <= 0.0:
+            return glow_layer
+
+        blur_map = {
+            "soft": (0.006, 0.011),
+            "mist": (0.014, 0.028),
+            "bloom": (0.018, 0.038),
+            "neon": (0.004, 0.009),
+            "aura": (0.01, 0.02),
+            "outline": (0.004, 0.008),
+            "shadow": (0.01, 0.018),
+            "prism": (0.007, 0.015),
+        }
+        first_factor, second_factor = blur_map.get(style, (0.006, 0.012))
+        first_radius = max(1.0, height * first_factor * max(0.4, strength))
+        second_radius = max(first_radius + 0.5, height * second_factor * max(0.55, strength))
+
+        first = glow_layer.filter(ImageFilter.GaussianBlur(first_radius))
+        second = _scale_image_alpha(glow_layer.filter(ImageFilter.GaussianBlur(second_radius)), 0.75)
+        combined = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        combined.alpha_composite(first)
+        combined.alpha_composite(second)
+
+        if style in {"mist", "bloom"}:
+            third_radius = second_radius * (1.45 if style == "mist" else 1.75)
+            third_strength = 0.52 if style == "mist" else 0.65
+            third = _scale_image_alpha(glow_layer.filter(ImageFilter.GaussianBlur(third_radius)), third_strength)
+            combined.alpha_composite(third)
+
+        return combined
 
     def _active_fill_color(self, state: _AnimationState) -> tuple[int, int, int, int]:
         style = self.settings.animation_style
         strength = self.settings.animation_strength
         mix_amount = 0.0
 
-        if style == "pulse":
+        if style == "blink":
+            mix_amount = 0.35 * strength * (1.0 if state.stepped > 0.5 else 0.0)
+        elif style == "pop":
+            mix_amount = 0.3 * strength * state.stepped
+        elif style == "scan":
+            mix_amount = 0.18 * strength * (0.4 + state.stepped * 0.6)
+        elif style == "jitter":
+            mix_amount = 0.22 * strength * abs(state.jitter)
+        elif style == "arcade":
+            mix_amount = 0.28 * strength * (0.5 + state.stepped * 0.5)
+        elif style == "pulse":
             mix_amount = 0.12 * strength * (0.25 + state.wave)
         elif style == "breathe":
             mix_amount = 0.14 * strength * state.wave
@@ -300,12 +425,74 @@ class ProjectRenderer:
         if style == "none":
             return
 
+        if style == "blink":
+            if state.stepped > 0.5:
+                stripe_height = max(1.0, height * 0.18)
+                draw.rectangle(
+                    (rect[0] + 1.0, rect[1] + 1.0, rect[2] - 1.0, rect[1] + stripe_height),
+                    fill=_with_alpha(self.settings.outline_color, 145),
+                )
+            return
+
+        if style == "pop":
+            pop_rect = _expand_rect(rect, height * 0.08 * state.stepped, height * 0.08 * state.stepped)
+            draw.rounded_rectangle(
+                pop_rect,
+                radius=radius + height * 0.08,
+                outline=_with_alpha(accent, int(135 * state.stepped)),
+                width=max(1, int(height * 0.12)),
+            )
+            return
+
+        if style == "scan":
+            line_height = max(1.0, height * 0.14)
+            steps = 4
+            step_index = min(steps - 1, int(state.phase * steps))
+            scan_y = _lerp(rect[1] + line_height, rect[3] - line_height, step_index / max(1, steps - 1))
+            draw.rectangle(
+                (rect[0] + 1.0, scan_y - line_height / 2.0, rect[2] - 1.0, scan_y + line_height / 2.0),
+                fill=_with_alpha(accent, 120),
+            )
+            return
+
+        if style == "jitter":
+            bar_width = max(2.0, width * 0.12)
+            for index in range(2):
+                offset = index * bar_width * 1.4 + (state.stepped * bar_width)
+                x = rect[0] + offset
+                draw.rectangle(
+                    (x, rect[1] + 1.0, min(rect[2], x + bar_width), rect[3] - 1.0),
+                    fill=_with_alpha(accent, 70),
+                )
+            return
+
+        if style == "arcade":
+            frame_width = max(1, int(height * 0.12))
+            draw.rectangle(
+                (rect[0], rect[1], rect[2], rect[3]),
+                outline=_with_alpha(accent, 130),
+                width=frame_width,
+            )
+            pips = 3
+            pip_width = max(2.0, width * 0.08)
+            gap = max(2.0, width * 0.04)
+            start_x = rect[0] + width * 0.12
+            pip_y = rect[1] + height * 0.18
+            for index in range(pips):
+                if index <= int(state.stepped * (pips - 1) + 0.001):
+                    x0 = start_x + index * (pip_width + gap)
+                    draw.rectangle(
+                        (x0, pip_y, x0 + pip_width, pip_y + height * 0.12),
+                        fill=_with_alpha(self.settings.outline_color, 150),
+                    )
+            return
+
         if style in {"pulse", "breathe"}:
             shine_height = height * (0.22 + 0.1 * state.wave)
             highlight_rect = _inset_rect((rect[0], rect[1], rect[2], rect[1] + shine_height), 1.0, 1.0)
             draw.rounded_rectangle(
                 highlight_rect,
-                radius=max(1, radius * 0.6),
+                radius=max(1.0, radius * 0.6),
                 fill=_with_alpha(self.settings.outline_color, int(70 + 60 * state.wave)),
             )
             return
@@ -348,7 +535,7 @@ class ProjectRenderer:
             inner_rect = _inset_rect(rect, height * 0.08, height * 0.08)
             draw.rounded_rectangle(
                 inner_rect,
-                radius=max(1, radius * 0.8),
+                radius=max(1.0, radius * 0.8),
                 outline=_with_alpha(accent, alpha),
                 width=max(1, int(height * 0.1)),
             )
@@ -368,6 +555,11 @@ class ProjectRenderer:
     def _rect_radius(self, rect: tuple[float, float, float, float]) -> float:
         width = rect[2] - rect[0]
         height = rect[3] - rect[1]
+        corner_style = self.settings.corner_style
+        if corner_style == "square":
+            return 0.0
+        if corner_style == "capsule":
+            return max(1.0, min(height, width) * 0.49)
         return max(1.0, min(height, width) * 0.24)
 
     def _build_measure_segments(self, project: MidiProject) -> list[list[_VisibleSegment]]:
@@ -474,3 +666,10 @@ def _mix_colors(color_a: str, color_b: str, amount: float, alpha: int = 255) -> 
     green = int(green_a + (green_b - green_a) * ratio)
     blue = int(blue_a + (blue_b - blue_a) * ratio)
     return red, green, blue, alpha
+
+
+def _scale_image_alpha(image: Image.Image, factor: float) -> Image.Image:
+    scaled = image.copy()
+    alpha = scaled.getchannel("A").point(lambda value: int(value * factor))
+    scaled.putalpha(alpha)
+    return scaled

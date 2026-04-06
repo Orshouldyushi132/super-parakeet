@@ -41,6 +41,7 @@ class RenderSettings:
     glow_color: str = "#d9d9d9"
     animation_accent_color: str = "#7dd3fc"
     outline_color: str = "#ffffff"
+    corner_style: str = "rounded"
     glow_style: str = "soft"
     animation_style: str = "pulse"
     glow_strength: float = 0.65
@@ -54,9 +55,17 @@ class ThemePreset:
     settings: RenderSettings
 
 
+CORNER_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("square", "四角"),
+    ("rounded", "丸角"),
+    ("capsule", "カプセル"),
+)
+
 GLOW_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
     ("none", "なし"),
     ("soft", "ソフト"),
+    ("mist", "ぼんやり"),
+    ("bloom", "ブルーム"),
     ("neon", "ネオン"),
     ("aura", "オーラ"),
     ("outline", "輪郭"),
@@ -66,6 +75,11 @@ GLOW_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
 
 ANIMATION_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
     ("none", "なし"),
+    ("blink", "点滅"),
+    ("pop", "ポップ"),
+    ("scan", "走査線"),
+    ("jitter", "ガタガタ"),
+    ("arcade", "アーケード"),
     ("pulse", "パルス"),
     ("breathe", "ブレス"),
     ("shimmer", "シマー"),
@@ -88,11 +102,12 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             glow_color="#d9d9d9",
             animation_accent_color="#7dd3fc",
             outline_color="#ffffff",
-            glow_style="soft",
-            animation_style="pulse",
-            glow_strength=0.65,
-            animation_strength=0.55,
-            animation_speed=1.0,
+            corner_style="rounded",
+            glow_style="bloom",
+            animation_style="blink",
+            glow_strength=0.8,
+            animation_strength=0.65,
+            animation_speed=1.15,
         ),
     ),
     ThemePreset(
@@ -104,11 +119,12 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             glow_color="#93dcff",
             animation_accent_color="#37bdf8",
             outline_color="#e1f5ff",
+            corner_style="rounded",
             glow_style="neon",
-            animation_style="shimmer",
+            animation_style="scan",
             glow_strength=0.8,
-            animation_strength=0.7,
-            animation_speed=1.3,
+            animation_strength=0.65,
+            animation_speed=1.1,
         ),
     ),
     ThemePreset(
@@ -120,10 +136,11 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             glow_color="#ff9f6e",
             animation_accent_color="#ff4d8d",
             outline_color="#ffe7c2",
-            glow_style="aura",
-            animation_style="breathe",
+            corner_style="capsule",
+            glow_style="mist",
+            animation_style="pop",
             glow_strength=0.9,
-            animation_strength=0.6,
+            animation_strength=0.75,
             animation_speed=0.9,
         ),
     ),
@@ -136,11 +153,12 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             glow_color="#6ee7b7",
             animation_accent_color="#34d399",
             outline_color="#d7ffea",
+            corner_style="rounded",
             glow_style="soft",
-            animation_style="wave",
-            glow_strength=0.7,
-            animation_strength=0.75,
-            animation_speed=1.15,
+            animation_style="arcade",
+            glow_strength=0.75,
+            animation_strength=0.7,
+            animation_speed=1.0,
         ),
     ),
     ThemePreset(
@@ -152,8 +170,9 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             glow_color="#ff74dd",
             animation_accent_color="#9b8cff",
             outline_color="#ffe0ff",
+            corner_style="square",
             glow_style="prism",
-            animation_style="flicker",
+            animation_style="jitter",
             glow_strength=0.95,
             animation_strength=0.85,
             animation_speed=1.6,
@@ -168,11 +187,29 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             glow_color="#ffd166",
             animation_accent_color="#fca311",
             outline_color="#fff0bc",
+            corner_style="square",
             glow_style="outline",
-            animation_style="expand",
+            animation_style="arcade",
             glow_strength=0.75,
             animation_strength=0.8,
             animation_speed=1.1,
+        ),
+    ),
+    ThemePreset(
+        name="アーケード",
+        settings=RenderSettings(
+            background_color="#060606",
+            idle_note_color="#2a2a2a",
+            active_note_color="#ffffff",
+            glow_color="#9cf7ff",
+            animation_accent_color="#00e5ff",
+            outline_color="#ffffff",
+            corner_style="square",
+            glow_style="mist",
+            animation_style="scan",
+            glow_strength=1.0,
+            animation_strength=0.9,
+            animation_speed=1.2,
         ),
     ),
 )

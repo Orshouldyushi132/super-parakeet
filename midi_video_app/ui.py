@@ -12,6 +12,7 @@ from .exporter import export_video
 from .midi_loader import load_midi_project
 from .models import (
     ANIMATION_STYLE_CHOICES,
+    CORNER_STYLE_CHOICES,
     CUSTOM_THEME_NAME,
     DEFAULT_THEME_NAME,
     GLOW_STYLE_CHOICES,
@@ -53,6 +54,8 @@ class MidiVideoApp:
         self._glow_label_to_value = {label: value for value, label in GLOW_STYLE_CHOICES}
         self._animation_value_to_label = {value: label for value, label in ANIMATION_STYLE_CHOICES}
         self._animation_label_to_value = {label: value for value, label in ANIMATION_STYLE_CHOICES}
+        self._corner_value_to_label = {value: label for value, label in CORNER_STYLE_CHOICES}
+        self._corner_label_to_value = {label: value for value, label in CORNER_STYLE_CHOICES}
         self._theme_names = [preset.name for preset in THEME_PRESETS] + [CUSTOM_THEME_NAME]
 
         self.file_label_var = tk.StringVar(value="MIDIファイルが読み込まれていません")
@@ -62,6 +65,7 @@ class MidiVideoApp:
         self.fps_var = tk.StringVar(value=str(DEFAULT_FPS))
 
         self.theme_var = tk.StringVar(value=DEFAULT_THEME_NAME)
+        self.corner_style_var = tk.StringVar(value=self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var = tk.StringVar(value=self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var = tk.StringVar(value=self._animation_value_to_label[self.render_settings.animation_style])
         self.glow_strength_var = tk.DoubleVar(value=self.render_settings.glow_strength * 100.0)
@@ -154,6 +158,18 @@ class MidiVideoApp:
         self.theme_combo = ttk.Combobox(panel, state="readonly", values=self._theme_names, textvariable=self.theme_var, width=18)
         self.theme_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(12, 0))
         self.theme_combo.bind("<<ComboboxSelected>>", self._on_theme_selected)
+
+        row += 1
+        ttk.Label(panel, text="角の形").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.corner_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in CORNER_STYLE_CHOICES],
+            textvariable=self.corner_style_var,
+            width=16,
+        )
+        self.corner_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.corner_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
 
         row += 1
         ttk.Separator(panel).grid(row=row, column=0, columnspan=4, sticky="ew", pady=12)
@@ -460,6 +476,7 @@ class MidiVideoApp:
         if self._updating_style_controls:
             return
 
+        self.render_settings.corner_style = self._corner_label_to_value[self.corner_style_var.get()]
         self.render_settings.glow_style = self._glow_label_to_value[self.glow_style_var.get()]
         self.render_settings.animation_style = self._animation_label_to_value[self.animation_style_var.get()]
         if self.renderer:
@@ -484,6 +501,7 @@ class MidiVideoApp:
         self._updating_style_controls = True
 
         self.theme_var.set(selected_theme)
+        self.corner_style_var.set(self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var.set(self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var.set(self._animation_value_to_label[self.render_settings.animation_style])
         self.glow_strength_var.set(self.render_settings.glow_strength * 100.0)
