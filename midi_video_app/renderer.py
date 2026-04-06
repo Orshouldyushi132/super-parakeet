@@ -1,16 +1,12 @@
 from __future__ import annotations
 
+import math
 from bisect import bisect_right
 from dataclasses import dataclass
 
 from PIL import Image, ImageDraw
 
-from .models import Measure, MidiProject
-
-
-BACKGROUND_COLOR = "#000000"
-IDLE_NOTE_COLOR = "#2f2f2f"
-ACTIVE_NOTE_COLOR = "#ffffff"
+from .models import Measure, MidiProject, RenderSettings
 
 
 @dataclass(slots=True)
@@ -22,11 +18,23 @@ class _VisibleSegment:
     note_end_sec: float
 
 
+@dataclass(slots=True)
+class _AnimationState:
+    phase: float
+    wave: float
+    flicker: float
+    lift: float
+
+
 class ProjectRenderer:
-    def __init__(self, project: MidiProject) -> None:
+    def __init__(self, project: MidiProject, settings: RenderSettings | None = None) -> None:
         self.project = project
+        self.settings = settings or RenderSettings()
         self._measure_start_seconds = [measure.start_sec for measure in project.measures]
         self._measure_segments = self._build_measure_segments(project)
+
+    def set_settings(self, settings: RenderSettings) -> None:
+        self.settings = settings
 
     def get_measure_for_time(self, time_sec: float) -> Measure:
         if time_sec <= 0:
@@ -39,12 +47,13 @@ class ProjectRenderer:
         return self.project.measures[index]
 
     def render_frame(self, time_sec: float, width: int, height: int) -> Image.Image:
+        settings = self.settings
         clamped_time = max(0.0, min(time_sec, max(self.project.duration_sec - 1e-6, 0.0)))
         measure = self.get_measure_for_time(clamped_time)
         note_segments = self._measure_segments[measure.index]
 
-        image = Image.new("RGB", (width, height), BACKGROUND_COLOR)
-        draw = ImageDraw.Draw(image)
+        image = Image.new("RGBA", (width, height), _with_alpha(settings.background_color, 255))
+        draw = ImageDraw.Draw(image, "RGBA")
 
         left_padding = width * 0.045
         right_padding = width * 0.045
@@ -69,11 +78,297 @@ class ProjectRenderer:
             lane_top = top_padding + pitch_index * lane_height
             y0 = lane_top + (lane_height - rectangle_height) / 2.0
             y1 = y0 + rectangle_height
+            rect = (x0, y0, x1, y1)
 
-            color = ACTIVE_NOTE_COLOR if segment.note_start_sec <= clamped_time < segment.note_end_sec else IDLE_NOTE_COLOR
-            draw.rectangle((x0, y0, x1, y1), fill=color)
+            if segment.note_start_sec <= clamped_time < segment.note_end_sec:
+                self._draw_active_segment(draw, rect, segment, clamped_time)
+            else:
+                self._draw_idle_segment(draw, rect)
 
-        return image
+        return image.convert("RGB")
+
+    def _draw_idle_segment(self, draw: ImageDraw.ImageDraw, rect: tuple[float, float, float, float]) -> None:
+        radius = self._rect_radius(rect)
+        draw.rounded_rectangle(rect, radius=radius, fill=_with_alpha(self.settings.idle_note_color, 255))
+
+    def _draw_active_segment(
+        self,
+        draw: ImageDraw.ImageDraw,
+        rect: tuple[float, float, float, float],
+        segment: _VisibleSegment,
+        time_sec: float,
+    ) -> None:
+        state = self._build_animation_state(segment, time_sec)
+        animated_rect = self._animated_rect(rect, state)
+        radius = self._rect_radius(animated_rect)
+
+        self._draw_glow(draw, animated_rect, radius, state)
+
+        fill_color = self._active_fill_color(state)
+        draw.rounded_rectangle(animated_rect, radius=radius, fill=fill_color)
+
+        outline_alpha = 220 if self.settings.glow_style in {"neon", "outline", "prism"} else 170
+        outline_width = max(1, int((animated_rect[3] - animated_rect[1]) * 0.12))
+        draw.rounded_rectangle(
+            animated_rect,
+            radius=radius,
+            outline=_with_alpha(self.settings.outline_color, outline_alpha),
+            width=outline_width,
+        )
+
+        self._draw_animation_overlay(draw, animated_rect, radius, state)
+
+    def _build_animation_state(self, segment: _VisibleSegment, time_sec: float) -> _AnimationState:
+        duration = max(segment.note_end_sec - segment.note_start_sec, 1e-6)
+        phase = _clamp((time_sec - segment.note_start_sec) / duration)
+        speed = max(0.25, self.settings.animation_speed)
+        seed = (segment.note * 0.137 + segment.note_start_sec * 0.071) % 1.0
+        cycle = phase * speed + seed
+        wave = 0.5 + 0.5 * math.sin(cycle * math.tau)
+        flicker = 0.35 + 0.65 * abs(math.sin((phase * (speed * 3.7 + 0.8) + seed) * math.tau))
+        lift = math.sin(cycle * math.tau)
+        return _AnimationState(phase=phase, wave=wave, flicker=flicker, lift=lift)
+
+    def _animated_rect(
+        self,
+        rect: tuple[float, float, float, float],
+        state: _AnimationState,
+    ) -> tuple[float, float, float, float]:
+        style = self.settings.animation_style
+        strength = self.settings.animation_strength
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+
+        expand_x = 0.0
+        expand_y = 0.0
+        shift_y = 0.0
+
+        if style == "pulse":
+            expand_x = width * 0.08 * strength * (0.35 + state.wave)
+            expand_y = height * 0.22 * strength * (0.35 + state.wave)
+        elif style == "breathe":
+            expand_x = width * 0.04 * strength * state.wave
+            expand_y = height * 0.35 * strength * state.wave
+        elif style == "shimmer":
+            expand_x = width * 0.015 * strength
+        elif style == "bounce":
+            shift_y = -height * 0.35 * strength * state.lift
+        elif style == "expand":
+            expand_x = width * 0.05 * strength * state.wave
+            expand_y = height * 0.16 * strength * state.wave
+        elif style == "flicker":
+            expand_x = width * 0.025 * strength * state.flicker
+            expand_y = height * 0.08 * strength * state.flicker
+        elif style == "wave":
+            expand_x = width * 0.03 * strength * state.wave
+            shift_y = -height * 0.12 * strength * state.lift
+
+        animated_rect = _expand_rect(rect, expand_x, expand_y)
+        return _offset_rect(animated_rect, 0.0, shift_y)
+
+    def _draw_glow(
+        self,
+        draw: ImageDraw.ImageDraw,
+        rect: tuple[float, float, float, float],
+        radius: float,
+        state: _AnimationState,
+    ) -> None:
+        style = self.settings.glow_style
+        strength = self.settings.glow_strength
+        if style == "none" or strength <= 0.0:
+            return
+
+        height = rect[3] - rect[1]
+        base_alpha = int(150 * _clamp(0.35 + strength))
+
+        if style == "soft":
+            for scale, alpha_scale in ((0.35, 0.55), (0.7, 0.28), (1.05, 0.12)):
+                expansion = height * strength * scale
+                draw.rounded_rectangle(
+                    _expand_rect(rect, expansion, expansion),
+                    radius=radius + expansion,
+                    fill=_with_alpha(self.settings.glow_color, int(base_alpha * alpha_scale)),
+                )
+            return
+
+        if style == "neon":
+            for scale, alpha_scale in ((0.18, 0.75), (0.45, 0.36), (0.85, 0.16)):
+                expansion = height * strength * scale
+                draw.rounded_rectangle(
+                    _expand_rect(rect, expansion, expansion),
+                    radius=radius + expansion,
+                    fill=_with_alpha(self.settings.glow_color, int(base_alpha * alpha_scale)),
+                )
+            draw.rounded_rectangle(
+                rect,
+                radius=radius,
+                outline=_with_alpha(self.settings.outline_color, 235),
+                width=max(1, int(height * 0.14)),
+            )
+            return
+
+        if style == "aura":
+            aura_colors = (
+                self.settings.glow_color,
+                self.settings.animation_accent_color,
+                self.settings.glow_color,
+            )
+            for index, color in enumerate(aura_colors):
+                expansion = height * strength * (0.22 + index * 0.28 + state.wave * 0.12)
+                draw.rounded_rectangle(
+                    _expand_rect(rect, expansion, expansion),
+                    radius=radius + expansion,
+                    fill=_with_alpha(color, int(base_alpha / (1.0 + index * 1.1))),
+                )
+            return
+
+        if style == "outline":
+            expansion = height * strength * 0.14
+            draw.rounded_rectangle(
+                _expand_rect(rect, expansion, expansion),
+                radius=radius + expansion,
+                outline=_with_alpha(self.settings.outline_color, 225),
+                width=max(1, int(height * 0.18)),
+            )
+            return
+
+        if style == "shadow":
+            shadow_offset = height * strength * 0.34
+            for index, alpha in enumerate((90, 42)):
+                expansion = height * strength * (0.14 + index * 0.18)
+                shadow_rect = _offset_rect(
+                    _expand_rect(rect, expansion, expansion),
+                    shadow_offset * (0.8 + index * 0.25),
+                    shadow_offset * (0.8 + index * 0.25),
+                )
+                draw.rounded_rectangle(
+                    shadow_rect,
+                    radius=radius + expansion,
+                    fill=_with_alpha(self.settings.glow_color, alpha),
+                )
+            return
+
+        if style == "prism":
+            prism_layers = (
+                (self.settings.glow_color, 0.2, 0.7),
+                (self.settings.animation_accent_color, 0.48, 0.38),
+                (self.settings.outline_color, 0.9, 0.18),
+            )
+            for color, scale, alpha_scale in prism_layers:
+                expansion = height * strength * (scale + state.wave * 0.08)
+                draw.rounded_rectangle(
+                    _expand_rect(rect, expansion, expansion),
+                    radius=radius + expansion,
+                    fill=_with_alpha(color, int(base_alpha * alpha_scale)),
+                )
+
+    def _active_fill_color(self, state: _AnimationState) -> tuple[int, int, int, int]:
+        style = self.settings.animation_style
+        strength = self.settings.animation_strength
+        mix_amount = 0.0
+
+        if style == "pulse":
+            mix_amount = 0.12 * strength * (0.25 + state.wave)
+        elif style == "breathe":
+            mix_amount = 0.14 * strength * state.wave
+        elif style == "shimmer":
+            mix_amount = 0.16 * strength * (0.4 + state.wave * 0.6)
+        elif style == "bounce":
+            mix_amount = 0.14 * strength * (0.3 + abs(state.lift))
+        elif style == "expand":
+            mix_amount = 0.22 * strength * state.wave
+        elif style == "flicker":
+            mix_amount = 0.35 * strength * state.flicker
+        elif style == "wave":
+            mix_amount = 0.18 * strength * (0.4 + state.wave)
+
+        return _mix_colors(self.settings.active_note_color, self.settings.animation_accent_color, mix_amount)
+
+    def _draw_animation_overlay(
+        self,
+        draw: ImageDraw.ImageDraw,
+        rect: tuple[float, float, float, float],
+        radius: float,
+        state: _AnimationState,
+    ) -> None:
+        style = self.settings.animation_style
+        strength = self.settings.animation_strength
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+        accent = self.settings.animation_accent_color
+
+        if style == "none":
+            return
+
+        if style in {"pulse", "breathe"}:
+            shine_height = height * (0.22 + 0.1 * state.wave)
+            highlight_rect = _inset_rect((rect[0], rect[1], rect[2], rect[1] + shine_height), 1.0, 1.0)
+            draw.rounded_rectangle(
+                highlight_rect,
+                radius=max(1, radius * 0.6),
+                fill=_with_alpha(self.settings.outline_color, int(70 + 60 * state.wave)),
+            )
+            return
+
+        if style == "shimmer":
+            bar_width = max(5.0, width * 0.22)
+            travel = _lerp(rect[0] - bar_width, rect[2] + bar_width, state.phase)
+            shimmer = [
+                (travel - bar_width, rect[3]),
+                (travel, rect[1]),
+                (travel + bar_width, rect[1]),
+                (travel, rect[3]),
+            ]
+            draw.polygon(shimmer, fill=_with_alpha(accent, int(110 * _clamp(0.2 + strength))))
+            return
+
+        if style == "bounce":
+            trail_rect = _offset_rect(rect, 0.0, height * 0.2 * (0.4 + state.wave))
+            draw.rounded_rectangle(
+                trail_rect,
+                radius=radius,
+                outline=_with_alpha(accent, 90),
+                width=max(1, int(height * 0.12)),
+            )
+            return
+
+        if style == "expand":
+            expansion = height * strength * (0.4 + state.wave * 0.7)
+            ring_rect = _expand_rect(rect, expansion, expansion)
+            draw.rounded_rectangle(
+                ring_rect,
+                radius=radius + expansion,
+                outline=_with_alpha(accent, int(150 * (1.0 - state.wave * 0.55))),
+                width=max(1, int(height * 0.12)),
+            )
+            return
+
+        if style == "flicker":
+            alpha = int(60 + 120 * state.flicker)
+            inner_rect = _inset_rect(rect, height * 0.08, height * 0.08)
+            draw.rounded_rectangle(
+                inner_rect,
+                radius=max(1, radius * 0.8),
+                outline=_with_alpha(accent, alpha),
+                width=max(1, int(height * 0.1)),
+            )
+            return
+
+        if style == "wave":
+            stripe_count = 3
+            for index in range(stripe_count):
+                offset = (state.phase + index / stripe_count) % 1.0
+                stripe_y = _lerp(rect[1] + 2.0, rect[3] - 2.0, offset)
+                draw.line(
+                    (rect[0] + 2.0, stripe_y, rect[2] - 2.0, stripe_y),
+                    fill=_with_alpha(accent, 95),
+                    width=max(1, int(height * 0.08)),
+                )
+
+    def _rect_radius(self, rect: tuple[float, float, float, float]) -> float:
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+        return max(1.0, min(height, width) * 0.24)
 
     def _build_measure_segments(self, project: MidiProject) -> list[list[_VisibleSegment]]:
         segments_by_measure: list[list[_VisibleSegment]] = [[] for _ in project.measures]
@@ -116,3 +411,66 @@ class ProjectRenderer:
             measure_segments.sort(key=lambda segment: (segment.note, segment.start_ratio, segment.end_ratio))
 
         return segments_by_measure
+
+
+def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _lerp(start: float, end: float, amount: float) -> float:
+    return start + (end - start) * _clamp(amount)
+
+
+def _expand_rect(rect: tuple[float, float, float, float], expand_x: float, expand_y: float) -> tuple[float, float, float, float]:
+    return (
+        rect[0] - expand_x,
+        rect[1] - expand_y,
+        rect[2] + expand_x,
+        rect[3] + expand_y,
+    )
+
+
+def _offset_rect(rect: tuple[float, float, float, float], offset_x: float, offset_y: float) -> tuple[float, float, float, float]:
+    return (
+        rect[0] + offset_x,
+        rect[1] + offset_y,
+        rect[2] + offset_x,
+        rect[3] + offset_y,
+    )
+
+
+def _inset_rect(rect: tuple[float, float, float, float], inset_x: float, inset_y: float) -> tuple[float, float, float, float]:
+    width = rect[2] - rect[0]
+    height = rect[3] - rect[1]
+    clamped_x = min(max(0.0, inset_x), max(0.0, (width - 1.0) / 2.0))
+    clamped_y = min(max(0.0, inset_y), max(0.0, (height - 1.0) / 2.0))
+    return (
+        rect[0] + clamped_x,
+        rect[1] + clamped_y,
+        rect[2] - clamped_x,
+        rect[3] - clamped_y,
+    )
+
+
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    value = color.strip().lstrip("#")
+    if len(value) == 3:
+        value = "".join(character * 2 for character in value)
+    if len(value) != 6:
+        raise ValueError(f"Unsupported color value: {color}")
+    return tuple(int(value[index : index + 2], 16) for index in range(0, 6, 2))
+
+
+def _with_alpha(color: str, alpha: int) -> tuple[int, int, int, int]:
+    red, green, blue = _hex_to_rgb(color)
+    return red, green, blue, max(0, min(255, int(alpha)))
+
+
+def _mix_colors(color_a: str, color_b: str, amount: float, alpha: int = 255) -> tuple[int, int, int, int]:
+    red_a, green_a, blue_a = _hex_to_rgb(color_a)
+    red_b, green_b, blue_b = _hex_to_rgb(color_b)
+    ratio = _clamp(amount)
+    red = int(red_a + (red_b - red_a) * ratio)
+    green = int(green_a + (green_b - green_a) * ratio)
+    blue = int(blue_a + (blue_b - blue_a) * ratio)
+    return red, green, blue, alpha
