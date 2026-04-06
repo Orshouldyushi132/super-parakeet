@@ -26,10 +26,13 @@ class _AnimationState:
     lift: float
     stepped: float
     jitter: float
+    burst: float
+    saw: float
 
 
 @dataclass(slots=True)
 class _ActiveRenderItem:
+    base_rect: tuple[float, float, float, float]
     rect: tuple[float, float, float, float]
     radius: float
     state: _AnimationState
@@ -99,7 +102,7 @@ class ProjectRenderer:
                 state = self._build_animation_state(segment, clamped_time)
                 animated_rect = self._animated_rect(rect, state)
                 radius = self._rect_radius(animated_rect)
-                active_items.append(_ActiveRenderItem(rect=animated_rect, radius=radius, state=state))
+                active_items.append(_ActiveRenderItem(base_rect=rect, rect=animated_rect, radius=radius, state=state))
                 self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, radius, state)
             else:
                 self._draw_idle_segment(draw, rect)
@@ -109,7 +112,7 @@ class ProjectRenderer:
         image.alpha_composite(crisp_glow_layer)
 
         for item in active_items:
-            self._draw_active_segment(draw, item.rect, item.radius, item.state)
+            self._draw_active_segment(draw, item.base_rect, item.rect, item.radius, item.state)
 
         return image.convert("RGB")
 
@@ -120,10 +123,13 @@ class ProjectRenderer:
     def _draw_active_segment(
         self,
         draw: ImageDraw.ImageDraw,
+        base_rect: tuple[float, float, float, float],
         rect: tuple[float, float, float, float],
         radius: float,
         state: _AnimationState,
     ) -> None:
+        self._draw_afterimage(draw, base_rect, rect, state)
+
         fill_color = self._active_fill_color(state)
         draw.rounded_rectangle(rect, radius=radius, fill=fill_color)
 
@@ -138,6 +144,65 @@ class ProjectRenderer:
 
         self._draw_animation_overlay(draw, rect, radius, state)
 
+    def _draw_afterimage(
+        self,
+        draw: ImageDraw.ImageDraw,
+        base_rect: tuple[float, float, float, float],
+        rect: tuple[float, float, float, float],
+        state: _AnimationState,
+    ) -> None:
+        style = self._resolved_afterimage_style()
+        strength = self.settings.afterimage_strength * max(0.2, self.settings.animation_strength)
+        if style == "none" or strength <= 0.0 or self.settings.animation_style == "none":
+            return
+
+        motion_amount = sum(abs(rect[index] - base_rect[index]) for index in range(4))
+        if motion_amount < 1.25:
+            return
+
+        accent_mix = 0.35 + 0.35 * state.wave
+        fill_color = _mix_colors(self.settings.active_note_color, self.settings.animation_accent_color, accent_mix)
+        outline_color = _mix_colors(self.settings.outline_color, self.settings.animation_accent_color, 0.5)
+        steps = max(2, min(6, int(round(2 + strength * 4.0))))
+
+        for step in range(1, steps + 1):
+            amount = step / (steps + 1)
+            ghost_rect = _lerp_rect(base_rect, rect, amount * 0.96)
+            ghost_radius = self._rect_radius(ghost_rect)
+            fade = (1.0 - amount * 0.74) * strength
+            fill_alpha = int(88 * fade)
+            outline_alpha = int(168 * fade)
+            line_width = max(1, int((ghost_rect[3] - ghost_rect[1]) * (0.08 + (1.0 - amount) * 0.06)))
+
+            if style in {"fill", "both"}:
+                draw.rounded_rectangle(
+                    ghost_rect,
+                    radius=ghost_radius,
+                    fill=(fill_color[0], fill_color[1], fill_color[2], fill_alpha),
+                )
+
+            if style in {"outline", "both"}:
+                draw.rounded_rectangle(
+                    ghost_rect,
+                    radius=ghost_radius,
+                    outline=(outline_color[0], outline_color[1], outline_color[2], outline_alpha),
+                    width=line_width,
+                )
+
+    def _resolved_afterimage_style(self) -> str:
+        style = self.settings.afterimage_style
+        if style != "auto":
+            return style
+
+        animation_style = self.settings.animation_style
+        if animation_style in {"pop", "breathe", "wave"}:
+            return "both"
+        if animation_style in {"pulse", "bounce", "expand", "shimmer"}:
+            return "fill"
+        if animation_style == "none":
+            return "none"
+        return "outline"
+
     def _build_animation_state(self, segment: _VisibleSegment, time_sec: float) -> _AnimationState:
         duration = max(segment.note_end_sec - segment.note_start_sec, 1e-6)
         phase = _clamp((time_sec - segment.note_start_sec) / duration)
@@ -147,8 +212,10 @@ class ProjectRenderer:
         wave = 0.5 + 0.5 * math.sin(cycle * math.tau)
         flicker = 0.35 + 0.65 * abs(math.sin((phase * (speed * 3.7 + 0.8) + seed) * math.tau))
         lift = math.sin(cycle * math.tau)
-        stepped = round(wave * 3.0) / 3.0
+        stepped = round((0.15 + wave * 0.85) * 4.0) / 4.0
         jitter = round(math.sin((cycle * 4.5 + seed) * math.tau) * 2.0) / 2.0
+        saw = (cycle * 1.35) % 1.0
+        burst = math.sin(saw * math.pi)
         return _AnimationState(
             phase=phase,
             wave=wave,
@@ -156,6 +223,8 @@ class ProjectRenderer:
             lift=lift,
             stepped=stepped,
             jitter=jitter,
+            burst=burst,
+            saw=saw,
         )
 
     def _animated_rect(
@@ -174,38 +243,55 @@ class ProjectRenderer:
         shift_x = 0.0
 
         if style == "blink":
-            expand_x = width * 0.05 * strength * state.stepped
-            expand_y = height * 0.12 * strength * state.stepped
+            snap = 1.0 if state.stepped >= 0.5 else 0.0
+            expand_x = width * 0.08 * strength * snap
+            expand_y = height * 0.18 * strength * snap
         elif style == "pop":
-            expand_x = width * 0.12 * strength * state.stepped
-            expand_y = height * 0.28 * strength * state.stepped
+            pop_amount = 0.32 + state.burst * 0.95
+            expand_x = width * 0.18 * strength * pop_amount
+            expand_y = height * 0.34 * strength * pop_amount
+            shift_y = -height * 0.05 * strength * state.burst
         elif style == "scan":
-            expand_y = height * 0.1 * strength * (0.4 + state.stepped)
+            expand_y = height * 0.14 * strength * (0.35 + state.stepped * 0.65)
+            expand_x = width * 0.02 * strength * state.stepped
         elif style == "jitter":
-            shift_x = width * 0.03 * strength * state.jitter
-            shift_y = -height * 0.14 * strength * state.jitter
+            shift_x = width * 0.06 * strength * state.jitter
+            shift_y = -height * 0.18 * strength * state.jitter
+            expand_x = width * 0.01 * strength * abs(state.jitter)
         elif style == "arcade":
-            shift_y = -height * 0.08 * strength * (1.0 if state.stepped > 0.5 else 0.0)
-            expand_x = width * 0.04 * strength * state.stepped
+            snap = 1.0 if state.stepped >= 0.5 else 0.0
+            shift_y = -height * 0.12 * strength * snap
+            expand_x = width * 0.07 * strength * state.stepped
+            expand_y = height * 0.08 * strength * state.stepped
         elif style == "pulse":
-            expand_x = width * 0.08 * strength * (0.35 + state.wave)
-            expand_y = height * 0.22 * strength * (0.35 + state.wave)
+            pulse = 0.18 + state.wave * 0.82
+            expand_x = width * 0.14 * strength * pulse
+            expand_y = height * 0.24 * strength * pulse
         elif style == "breathe":
-            expand_x = width * 0.04 * strength * state.wave
-            expand_y = height * 0.35 * strength * state.wave
+            stretch = 0.15 + state.wave * 0.85
+            expand_x = -width * 0.05 * strength * stretch
+            expand_y = height * 0.34 * strength * stretch
         elif style == "shimmer":
-            expand_x = width * 0.015 * strength
+            shift_x = width * 0.015 * strength * math.sin((state.phase * 2.0 + state.saw) * math.tau)
+            expand_x = width * 0.028 * strength
         elif style == "bounce":
-            shift_y = -height * 0.35 * strength * state.lift
+            hop = abs(state.lift)
+            shift_y = -height * 0.48 * strength * hop
+            expand_x = width * 0.05 * strength * hop
+            expand_y = -height * 0.14 * strength * hop
         elif style == "expand":
-            expand_x = width * 0.05 * strength * state.wave
-            expand_y = height * 0.16 * strength * state.wave
+            expansion = 0.25 + state.wave * 0.95
+            expand_x = width * 0.16 * strength * expansion
+            expand_y = height * 0.22 * strength * expansion
         elif style == "flicker":
-            expand_x = width * 0.025 * strength * state.flicker
-            expand_y = height * 0.08 * strength * state.flicker
+            expand_x = width * 0.05 * strength * state.flicker
+            expand_y = height * 0.1 * strength * state.flicker
+            shift_x = width * 0.015 * strength * math.sin((state.phase * 5.2 + state.saw) * math.tau)
         elif style == "wave":
-            expand_x = width * 0.03 * strength * state.wave
-            shift_y = -height * 0.12 * strength * state.lift
+            expand_x = width * 0.06 * strength * state.wave
+            expand_y = height * 0.08 * strength * (0.25 + state.wave)
+            shift_x = width * 0.035 * strength * state.lift
+            shift_y = -height * 0.16 * strength * math.sin((state.phase * 1.4 + state.saw) * math.tau)
 
         animated_rect = _expand_rect(rect, expand_x, expand_y)
         return _offset_rect(animated_rect, shift_x, shift_y)
@@ -383,29 +469,29 @@ class ProjectRenderer:
         mix_amount = 0.0
 
         if style == "blink":
-            mix_amount = 0.35 * strength * (1.0 if state.stepped > 0.5 else 0.0)
+            mix_amount = 0.42 * strength * (1.0 if state.stepped >= 0.5 else 0.08)
         elif style == "pop":
-            mix_amount = 0.3 * strength * state.stepped
+            mix_amount = 0.38 * strength * (0.25 + state.burst * 0.75)
         elif style == "scan":
-            mix_amount = 0.18 * strength * (0.4 + state.stepped * 0.6)
+            mix_amount = 0.2 * strength * (0.35 + state.saw * 0.65)
         elif style == "jitter":
-            mix_amount = 0.22 * strength * abs(state.jitter)
+            mix_amount = 0.28 * strength * abs(state.jitter)
         elif style == "arcade":
-            mix_amount = 0.28 * strength * (0.5 + state.stepped * 0.5)
+            mix_amount = 0.34 * strength * (0.35 + state.stepped * 0.65)
         elif style == "pulse":
-            mix_amount = 0.12 * strength * (0.25 + state.wave)
+            mix_amount = 0.18 * strength * (0.2 + state.wave * 0.8)
         elif style == "breathe":
-            mix_amount = 0.14 * strength * state.wave
+            mix_amount = 0.17 * strength * (0.25 + state.wave * 0.75)
         elif style == "shimmer":
-            mix_amount = 0.16 * strength * (0.4 + state.wave * 0.6)
+            mix_amount = 0.25 * strength * (0.25 + state.burst * 0.75)
         elif style == "bounce":
-            mix_amount = 0.14 * strength * (0.3 + abs(state.lift))
+            mix_amount = 0.22 * strength * (0.2 + abs(state.lift) * 0.8)
         elif style == "expand":
-            mix_amount = 0.22 * strength * state.wave
+            mix_amount = 0.28 * strength * (0.25 + state.wave * 0.75)
         elif style == "flicker":
             mix_amount = 0.35 * strength * state.flicker
         elif style == "wave":
-            mix_amount = 0.18 * strength * (0.4 + state.wave)
+            mix_amount = 0.22 * strength * (0.25 + state.wave * 0.75)
 
         return _mix_colors(self.settings.active_note_color, self.settings.animation_accent_color, mix_amount)
 
@@ -426,44 +512,67 @@ class ProjectRenderer:
             return
 
         if style == "blink":
-            if state.stepped > 0.5:
-                stripe_height = max(1.0, height * 0.18)
+            if state.stepped >= 0.5:
+                stripe_height = max(1.0, height * 0.22)
                 draw.rectangle(
                     (rect[0] + 1.0, rect[1] + 1.0, rect[2] - 1.0, rect[1] + stripe_height),
-                    fill=_with_alpha(self.settings.outline_color, 145),
+                    fill=_with_alpha(self.settings.outline_color, 165),
+                )
+                frame_rect = _expand_rect(rect, height * 0.04, height * 0.06)
+                draw.rounded_rectangle(
+                    frame_rect,
+                    radius=self._rect_radius(frame_rect),
+                    outline=_with_alpha(accent, 135),
+                    width=max(1, int(height * 0.1)),
                 )
             return
 
         if style == "pop":
-            pop_rect = _expand_rect(rect, height * 0.08 * state.stepped, height * 0.08 * state.stepped)
+            pop_rect = _expand_rect(rect, height * 0.14 * (0.25 + state.burst), height * 0.14 * (0.25 + state.burst))
             draw.rounded_rectangle(
                 pop_rect,
-                radius=radius + height * 0.08,
-                outline=_with_alpha(accent, int(135 * state.stepped)),
+                radius=self._rect_radius(pop_rect),
+                outline=_with_alpha(accent, int(165 * (0.2 + state.burst * 0.8))),
                 width=max(1, int(height * 0.12)),
+            )
+            inner_rect = _inset_rect(rect, width * 0.12, height * 0.18)
+            draw.rounded_rectangle(
+                inner_rect,
+                radius=max(1.0, self._rect_radius(inner_rect) * 0.8),
+                fill=_with_alpha(self.settings.outline_color, int(40 + 65 * state.burst)),
             )
             return
 
         if style == "scan":
             line_height = max(1.0, height * 0.14)
-            steps = 4
+            steps = 5
             step_index = min(steps - 1, int(state.phase * steps))
             scan_y = _lerp(rect[1] + line_height, rect[3] - line_height, step_index / max(1, steps - 1))
             draw.rectangle(
                 (rect[0] + 1.0, scan_y - line_height / 2.0, rect[2] - 1.0, scan_y + line_height / 2.0),
                 fill=_with_alpha(accent, 120),
             )
+            tail_y = max(rect[1] + line_height / 2.0, scan_y - line_height * 1.45)
+            draw.rectangle(
+                (rect[0] + width * 0.08, tail_y - line_height / 3.0, rect[2] - width * 0.08, tail_y + line_height / 3.0),
+                fill=_with_alpha(self.settings.outline_color, 70),
+            )
             return
 
         if style == "jitter":
-            bar_width = max(2.0, width * 0.12)
-            for index in range(2):
-                offset = index * bar_width * 1.4 + (state.stepped * bar_width)
-                x = rect[0] + offset
-                draw.rectangle(
-                    (x, rect[1] + 1.0, min(rect[2], x + bar_width), rect[3] - 1.0),
-                    fill=_with_alpha(accent, 70),
-                )
+            ghost_rect = _offset_rect(rect, -width * 0.06 * state.jitter, height * 0.06 * state.jitter)
+            draw.rounded_rectangle(
+                ghost_rect,
+                radius=self._rect_radius(ghost_rect),
+                outline=_with_alpha(accent, 130),
+                width=max(1, int(height * 0.1)),
+            )
+            slice_width = max(2.0, width * 0.1)
+            slice_x = rect[0] + width * (0.15 + 0.2 * abs(state.jitter))
+            draw.rectangle(
+                (slice_x, rect[1] + 1.0, min(rect[2], slice_x + slice_width), rect[3] - 1.0),
+                fill=_with_alpha(self.settings.outline_color, 78),
+            )
             return
 
         if style == "arcade":
@@ -485,15 +594,41 @@ class ProjectRenderer:
                         (x0, pip_y, x0 + pip_width, pip_y + height * 0.12),
                         fill=_with_alpha(self.settings.outline_color, 150),
                     )
+            corner_size = max(2.0, height * 0.16)
+            draw.rectangle((rect[0], rect[1], rect[0] + corner_size, rect[1] + corner_size), fill=_with_alpha(accent, 95))
+            draw.rectangle((rect[2] - corner_size, rect[3] - corner_size, rect[2], rect[3]), fill=_with_alpha(accent, 95))
             return
 
-        if style in {"pulse", "breathe"}:
+        if style == "pulse":
+            ring_rect = _expand_rect(rect, height * 0.08 * (0.2 + state.wave), height * 0.08 * (0.2 + state.wave))
+            draw.rounded_rectangle(
+                ring_rect,
+                radius=self._rect_radius(ring_rect),
+                outline=_with_alpha(accent, int(145 * (0.3 + state.wave * 0.7))),
+                width=max(1, int(height * 0.1)),
+            )
             shine_height = height * (0.22 + 0.1 * state.wave)
             highlight_rect = _inset_rect((rect[0], rect[1], rect[2], rect[1] + shine_height), 1.0, 1.0)
             draw.rounded_rectangle(
                 highlight_rect,
                 radius=max(1.0, radius * 0.6),
                 fill=_with_alpha(self.settings.outline_color, int(70 + 60 * state.wave)),
+            )
+            return
+
+        if style == "breathe":
+            top_gloss = _inset_rect((rect[0], rect[1], rect[2], rect[1] + height * 0.34), 1.0, 1.0)
+            bottom_glow = _inset_rect((rect[0], rect[3] - height * 0.28, rect[2], rect[3]), width * 0.06, 1.0)
+            draw.rounded_rectangle(
+                top_gloss,
+                radius=max(1.0, radius * 0.65),
+                fill=_with_alpha(self.settings.outline_color, int(65 + 50 * state.wave)),
+            )
+            draw.rounded_rectangle(
+                bottom_glow,
+                radius=max(1.0, radius * 0.5),
+                outline=_with_alpha(accent, int(120 * (0.25 + state.wave * 0.75))),
+                width=max(1, int(height * 0.08)),
             )
             return
 
@@ -510,12 +645,23 @@ class ProjectRenderer:
             return
 
         if style == "bounce":
-            trail_rect = _offset_rect(rect, 0.0, height * 0.2 * (0.4 + state.wave))
+            trail_rect = _offset_rect(rect, 0.0, height * 0.28 * (0.35 + state.wave))
             draw.rounded_rectangle(
                 trail_rect,
                 radius=radius,
                 outline=_with_alpha(accent, 90),
                 width=max(1, int(height * 0.12)),
+            )
+            shadow_rect = (
+                rect[0] + width * 0.08,
+                rect[3] + height * 0.12,
+                rect[2] - width * 0.08,
+                rect[3] + height * 0.24,
+            )
+            draw.rounded_rectangle(
+                shadow_rect,
+                radius=max(1.0, height * 0.12),
+                fill=_with_alpha(accent, 36),
             )
             return
 
@@ -528,17 +674,24 @@ class ProjectRenderer:
                 outline=_with_alpha(accent, int(150 * (1.0 - state.wave * 0.55))),
                 width=max(1, int(height * 0.12)),
             )
+            inner_rect = _inset_rect(rect, width * 0.08, height * 0.1)
+            draw.rounded_rectangle(
+                inner_rect,
+                radius=max(1.0, self._rect_radius(inner_rect) * 0.75),
+                outline=_with_alpha(self.settings.outline_color, 85),
+                width=max(1, int(height * 0.08)),
+            )
             return
 
         if style == "flicker":
-            alpha = int(60 + 120 * state.flicker)
-            inner_rect = _inset_rect(rect, height * 0.08, height * 0.08)
-            draw.rounded_rectangle(
-                inner_rect,
-                radius=max(1.0, radius * 0.8),
-                outline=_with_alpha(accent, alpha),
-                width=max(1, int(height * 0.1)),
-            )
+            alpha = int(70 + 120 * state.flicker)
+            slice_height = max(2.0, height * 0.18)
+            for index in range(3):
+                band_y = _lerp(rect[1] + slice_height, rect[3] - slice_height, ((state.saw + index * 0.23) % 1.0))
+                draw.rectangle(
+                    (rect[0] + width * 0.05, band_y - slice_height / 2.0, rect[2] - width * 0.05, band_y + slice_height / 2.0),
+                    fill=_with_alpha(accent, max(0, alpha - index * 28)),
+                )
             return
 
         if style == "wave":
@@ -546,8 +699,9 @@ class ProjectRenderer:
             for index in range(stripe_count):
                 offset = (state.phase + index / stripe_count) % 1.0
                 stripe_y = _lerp(rect[1] + 2.0, rect[3] - 2.0, offset)
+                wobble = width * 0.06 * math.sin((offset + state.phase) * math.tau)
                 draw.line(
-                    (rect[0] + 2.0, stripe_y, rect[2] - 2.0, stripe_y),
+                    (rect[0] + 2.0 + wobble, stripe_y, rect[2] - 2.0 - wobble, stripe_y),
                     fill=_with_alpha(accent, 95),
                     width=max(1, int(height * 0.08)),
                 )
@@ -611,6 +765,14 @@ def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
 
 def _lerp(start: float, end: float, amount: float) -> float:
     return start + (end - start) * _clamp(amount)
+
+
+def _lerp_rect(
+    rect_a: tuple[float, float, float, float],
+    rect_b: tuple[float, float, float, float],
+    amount: float,
+) -> tuple[float, float, float, float]:
+    return tuple(_lerp(rect_a[index], rect_b[index], amount) for index in range(4))
 
 
 def _expand_rect(rect: tuple[float, float, float, float], expand_x: float, expand_y: float) -> tuple[float, float, float, float]:

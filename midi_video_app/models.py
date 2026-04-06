@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import Any, Mapping
 
 
 @dataclass(slots=True)
@@ -44,9 +45,11 @@ class RenderSettings:
     corner_style: str = "rounded"
     glow_style: str = "soft"
     animation_style: str = "pulse"
+    afterimage_style: str = "auto"
     glow_strength: float = 0.65
     animation_strength: float = 0.6
     animation_speed: float = 1.0
+    afterimage_strength: float = 0.55
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +92,14 @@ ANIMATION_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
     ("wave", "ウェーブ"),
 )
 
+AFTERIMAGE_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("auto", "おまかせ"),
+    ("none", "なし"),
+    ("outline", "枠だけ"),
+    ("fill", "塗りだけ"),
+    ("both", "枠+塗り"),
+)
+
 DEFAULT_THEME_NAME = "モノクロフラッシュ"
 CUSTOM_THEME_NAME = "カスタム"
 
@@ -105,9 +116,11 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             corner_style="rounded",
             glow_style="bloom",
             animation_style="blink",
+            afterimage_style="outline",
             glow_strength=0.8,
             animation_strength=0.65,
             animation_speed=1.15,
+            afterimage_strength=0.42,
         ),
     ),
     ThemePreset(
@@ -122,9 +135,11 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             corner_style="rounded",
             glow_style="neon",
             animation_style="scan",
+            afterimage_style="outline",
             glow_strength=0.8,
             animation_strength=0.65,
             animation_speed=1.1,
+            afterimage_strength=0.48,
         ),
     ),
     ThemePreset(
@@ -139,9 +154,11 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             corner_style="capsule",
             glow_style="mist",
             animation_style="pop",
+            afterimage_style="both",
             glow_strength=0.9,
             animation_strength=0.75,
             animation_speed=0.9,
+            afterimage_strength=0.74,
         ),
     ),
     ThemePreset(
@@ -156,9 +173,11 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             corner_style="rounded",
             glow_style="soft",
             animation_style="arcade",
+            afterimage_style="outline",
             glow_strength=0.75,
             animation_strength=0.7,
             animation_speed=1.0,
+            afterimage_strength=0.52,
         ),
     ),
     ThemePreset(
@@ -173,9 +192,11 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             corner_style="square",
             glow_style="prism",
             animation_style="jitter",
+            afterimage_style="outline",
             glow_strength=0.95,
             animation_strength=0.85,
             animation_speed=1.6,
+            afterimage_strength=0.62,
         ),
     ),
     ThemePreset(
@@ -190,9 +211,11 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             corner_style="square",
             glow_style="outline",
             animation_style="arcade",
+            afterimage_style="outline",
             glow_strength=0.75,
             animation_strength=0.8,
             animation_speed=1.1,
+            afterimage_strength=0.56,
         ),
     ),
     ThemePreset(
@@ -207,9 +230,11 @@ THEME_PRESETS: tuple[ThemePreset, ...] = (
             corner_style="square",
             glow_style="mist",
             animation_style="scan",
+            afterimage_style="outline",
             glow_strength=1.0,
             animation_strength=0.9,
             animation_speed=1.2,
+            afterimage_strength=0.55,
         ),
     ),
 )
@@ -224,6 +249,54 @@ def get_render_settings_for_theme(name: str) -> RenderSettings:
         if preset.name == name:
             return clone_render_settings(preset.settings)
     return RenderSettings()
+
+
+def render_settings_to_dict(settings: RenderSettings) -> dict[str, Any]:
+    return asdict(settings)
+
+
+def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettings:
+    settings = RenderSettings()
+    if not data:
+        return settings
+
+    choice_sets = {
+        "corner_style": {value for value, _ in CORNER_STYLE_CHOICES},
+        "glow_style": {value for value, _ in GLOW_STYLE_CHOICES},
+        "animation_style": {value for value, _ in ANIMATION_STYLE_CHOICES},
+        "afterimage_style": {value for value, _ in AFTERIMAGE_STYLE_CHOICES},
+    }
+    float_ranges = {
+        "glow_strength": (0.0, 1.5),
+        "animation_strength": (0.0, 1.5),
+        "animation_speed": (0.25, 3.0),
+        "afterimage_strength": (0.0, 1.5),
+    }
+
+    for field_name in render_settings_to_dict(settings):
+        if field_name not in data:
+            continue
+
+        value = data[field_name]
+        if field_name.endswith("_color"):
+            if isinstance(value, str) and value.strip():
+                setattr(settings, field_name, value.strip())
+            continue
+
+        if field_name in choice_sets:
+            if isinstance(value, str) and value in choice_sets[field_name]:
+                setattr(settings, field_name, value)
+            continue
+
+        if field_name in float_ranges:
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                continue
+            minimum, maximum = float_ranges[field_name]
+            setattr(settings, field_name, max(minimum, min(maximum, numeric_value)))
+
+    return settings
 
 
 @dataclass(slots=True)

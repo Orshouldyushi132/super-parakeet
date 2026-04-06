@@ -11,6 +11,7 @@ from PIL import ImageTk
 from .exporter import export_video
 from .midi_loader import load_midi_project
 from .models import (
+    AFTERIMAGE_STYLE_CHOICES,
     ANIMATION_STYLE_CHOICES,
     CORNER_STYLE_CHOICES,
     CUSTOM_THEME_NAME,
@@ -54,6 +55,8 @@ class MidiVideoApp:
         self._glow_label_to_value = {label: value for value, label in GLOW_STYLE_CHOICES}
         self._animation_value_to_label = {value: label for value, label in ANIMATION_STYLE_CHOICES}
         self._animation_label_to_value = {label: value for value, label in ANIMATION_STYLE_CHOICES}
+        self._afterimage_value_to_label = {value: label for value, label in AFTERIMAGE_STYLE_CHOICES}
+        self._afterimage_label_to_value = {label: value for value, label in AFTERIMAGE_STYLE_CHOICES}
         self._corner_value_to_label = {value: label for value, label in CORNER_STYLE_CHOICES}
         self._corner_label_to_value = {label: value for value, label in CORNER_STYLE_CHOICES}
         self._theme_names = [preset.name for preset in THEME_PRESETS] + [CUSTOM_THEME_NAME]
@@ -68,12 +71,15 @@ class MidiVideoApp:
         self.corner_style_var = tk.StringVar(value=self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var = tk.StringVar(value=self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var = tk.StringVar(value=self._animation_value_to_label[self.render_settings.animation_style])
+        self.afterimage_style_var = tk.StringVar(value=self._afterimage_value_to_label[self.render_settings.afterimage_style])
         self.glow_strength_var = tk.DoubleVar(value=self.render_settings.glow_strength * 100.0)
         self.animation_strength_var = tk.DoubleVar(value=self.render_settings.animation_strength * 100.0)
         self.animation_speed_var = tk.DoubleVar(value=self.render_settings.animation_speed * 100.0)
+        self.afterimage_strength_var = tk.DoubleVar(value=self.render_settings.afterimage_strength * 100.0)
         self.glow_strength_text_var = tk.StringVar()
         self.animation_strength_text_var = tk.StringVar()
         self.animation_speed_text_var = tk.StringVar()
+        self.afterimage_strength_text_var = tk.StringVar()
 
         self._color_labels = {
             "background_color": "背景色",
@@ -216,6 +222,18 @@ class MidiVideoApp:
         self.animation_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
 
         row += 1
+        ttk.Label(panel, text="残像").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.afterimage_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in AFTERIMAGE_STYLE_CHOICES],
+            textvariable=self.afterimage_style_var,
+            width=16,
+        )
+        self.afterimage_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.afterimage_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
+        row += 1
         self._add_slider_control(
             panel,
             row,
@@ -248,6 +266,18 @@ class MidiVideoApp:
             self.animation_speed_text_var,
             25,
             300,
+            self._on_strength_changed,
+        )
+
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "残像の強さ",
+            self.afterimage_strength_var,
+            self.afterimage_strength_text_var,
+            0,
+            150,
             self._on_strength_changed,
         )
 
@@ -479,6 +509,7 @@ class MidiVideoApp:
         self.render_settings.corner_style = self._corner_label_to_value[self.corner_style_var.get()]
         self.render_settings.glow_style = self._glow_label_to_value[self.glow_style_var.get()]
         self.render_settings.animation_style = self._animation_label_to_value[self.animation_style_var.get()]
+        self.render_settings.afterimage_style = self._afterimage_label_to_value[self.afterimage_style_var.get()]
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
@@ -491,6 +522,7 @@ class MidiVideoApp:
         self.render_settings.glow_strength = round(self.glow_strength_var.get() / 100.0, 3)
         self.render_settings.animation_strength = round(self.animation_strength_var.get() / 100.0, 3)
         self.render_settings.animation_speed = round(self.animation_speed_var.get() / 100.0, 3)
+        self.render_settings.afterimage_strength = round(self.afterimage_strength_var.get() / 100.0, 3)
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
@@ -504,9 +536,11 @@ class MidiVideoApp:
         self.corner_style_var.set(self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var.set(self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var.set(self._animation_value_to_label[self.render_settings.animation_style])
+        self.afterimage_style_var.set(self._afterimage_value_to_label[self.render_settings.afterimage_style])
         self.glow_strength_var.set(self.render_settings.glow_strength * 100.0)
         self.animation_strength_var.set(self.render_settings.animation_strength * 100.0)
         self.animation_speed_var.set(self.render_settings.animation_speed * 100.0)
+        self.afterimage_strength_var.set(self.render_settings.afterimage_strength * 100.0)
         self._update_slider_labels()
 
         for field_name, label in self._color_swatches.items():
@@ -520,6 +554,7 @@ class MidiVideoApp:
         self.glow_strength_text_var.set(f"{self.glow_strength_var.get():.0f}%")
         self.animation_strength_text_var.set(f"{self.animation_strength_var.get():.0f}%")
         self.animation_speed_text_var.set(f"{self.animation_speed_var.get():.0f}%")
+        self.afterimage_strength_text_var.set(f"{self.afterimage_strength_var.get():.0f}%")
 
     def _schedule_playback_tick(self) -> None:
         self._handle_playback_tick()

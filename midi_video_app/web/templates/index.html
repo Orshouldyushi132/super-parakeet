@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MIDI小節切り替え動画ツール</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Browser Edition</p>
+        <h1>MIDI小節切り替え動画ツール</h1>
+        <p class="hero-copy">Mac とスマホでも使えるブラウザ版です。MIDI を読み込むと、1小節ごとの固定表示をつないだ動画をそのまま書き出せます。</p>
+      </div>
+      <div class="hero-note">
+        <p>スマホから使う場合</p>
+        <p>同じWi-FiにあるPCで `python web_main.py --host 0.0.0.0 --port 8000` を実行して、スマホのブラウザでそのPCのIPを開いてください。</p>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="preview-column">
+        <div class="panel top-panel">
+          <div class="upload-row">
+            <label class="file-picker">
+              <span>MIDIを選ぶ</span>
+              <input id="midiFileInput" type="file" accept=".mid,.midi">
+            </label>
+            <button id="exportButton" class="primary" type="button">MP4を書き出す</button>
+          </div>
+          <div class="meta-row">
+            <div>
+              <span class="meta-label">ファイル</span>
+              <strong id="fileName">未読み込み</strong>
+            </div>
+            <div>
+              <span class="meta-label">状態</span>
+              <strong id="statusText">MIDIを選択してください。</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel preview-panel">
+          <div class="preview-frame">
+            <img id="previewImage" alt="プレビュー" />
+            <div id="previewEmpty" class="preview-empty">MIDIを読み込むとここにプレビューが表示されます。</div>
+          </div>
+
+          <div class="transport">
+            <div class="transport-buttons">
+              <button id="playButton" type="button">再生 / 一時停止</button>
+              <button id="stopButton" type="button">停止</button>
+              <button id="prevMeasureButton" type="button">前の小節へ</button>
+              <button id="nextMeasureButton" type="button">次の小節へ</button>
+            </div>
+            <input id="timelineRange" type="range" min="0" max="1" step="0.001" value="0">
+            <div class="transport-meta">
+              <span id="timeText">00:00.000 / 00:00.000</span>
+              <span id="measureText">小節: -</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel settings-panel">
+        <div class="settings-header">
+          <h2>見た目設定</h2>
+          <p>テーマから始めて、細かく触りたいところだけ調整できます。</p>
+        </div>
+
+        <div class="field-grid">
+          <label class="field">
+            <span>テーマ</span>
+            <select id="themeSelect"></select>
+          </label>
+          <label class="field">
+            <span>角の形</span>
+            <select id="cornerStyleSelect"></select>
+          </label>
+          <label class="field">
+            <span>光り方</span>
+            <select id="glowStyleSelect"></select>
+          </label>
+          <label class="field">
+            <span>アニメーション</span>
+            <select id="animationStyleSelect"></select>
+          </label>
+          <label class="field">
+            <span>残像</span>
+            <select id="afterimageStyleSelect"></select>
+          </label>
+        </div>
+
+        <div class="field-grid colors">
+          <label class="field">
+            <span>背景色</span>
+            <input id="backgroundColorInput" type="color">
+          </label>
+          <label class="field">
+            <span>通常ノーツ色</span>
+            <input id="idleNoteColorInput" type="color">
+          </label>
+          <label class="field">
+            <span>発音中ノーツ色</span>
+            <input id="activeNoteColorInput" type="color">
+          </label>
+          <label class="field">
+            <span>発光色</span>
+            <input id="glowColorInput" type="color">
+          </label>
+          <label class="field">
+            <span>アニメ色</span>
+            <input id="animationAccentColorInput" type="color">
+          </label>
+          <label class="field">
+            <span>輪郭色</span>
+            <input id="outlineColorInput" type="color">
+          </label>
+        </div>
+
+        <div class="slider-list">
+          <label class="slider-field">
+            <span>発光の強さ</span>
+            <input id="glowStrengthInput" type="range" min="0" max="150" step="1">
+            <strong id="glowStrengthValue">0%</strong>
+          </label>
+          <label class="slider-field">
+            <span>アニメの強さ</span>
+            <input id="animationStrengthInput" type="range" min="0" max="150" step="1">
+            <strong id="animationStrengthValue">0%</strong>
+          </label>
+          <label class="slider-field">
+            <span>アニメ速度</span>
+            <input id="animationSpeedInput" type="range" min="25" max="300" step="1">
+            <strong id="animationSpeedValue">0%</strong>
+          </label>
+          <label class="slider-field">
+            <span>残像の強さ</span>
+            <input id="afterimageStrengthInput" type="range" min="0" max="150" step="1">
+            <strong id="afterimageStrengthValue">0%</strong>
+          </label>
+        </div>
+
+        <div class="export-box">
+          <label class="field">
+            <span>FPS</span>
+            <input id="fpsInput" type="number" min="1" max="120" value="30">
+          </label>
+          <p>書き出し解像度は 1920x1080 です。スマホ用の軽い確認はプレビューで行えます。</p>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    window.APP_BOOTSTRAP = {{ bootstrap | tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
