@@ -8,7 +8,7 @@ import imageio.v2 as imageio
 import numpy as np
 
 from .models import MidiProject
-from .renderer import MeasureRenderer
+from .renderer import ProjectRenderer
 
 
 ProgressCallback = Callable[[float, str], None]
@@ -16,7 +16,7 @@ ProgressCallback = Callable[[float, str], None]
 
 def export_video(
     project: MidiProject,
-    renderer: MeasureRenderer,
+    renderer: ProjectRenderer,
     output_path: str | Path,
     width: int,
     height: int,
@@ -27,7 +27,7 @@ def export_video(
     total_frames = max(1, math.ceil(project.duration_sec * fps))
 
     if progress_callback:
-        progress_callback(0.0, "Preparing export...")
+        progress_callback(0.0, "書き出しの準備中...")
 
     with imageio.get_writer(
         destination,
@@ -43,9 +43,9 @@ def export_video(
             writer.append_data(np.asarray(frame))
 
             if progress_callback:
-                progress_callback((frame_index + 1) / total_frames, f"Exporting frame {frame_index + 1}/{total_frames}")
+                progress_callback((frame_index + 1) / total_frames, f"動画を書き出し中... {frame_index + 1}/{total_frames}")
 
     if progress_callback:
-        progress_callback(1.0, f"Finished: {destination.name}")
+        progress_callback(1.0, f"書き出し完了: {destination.name}")
 
     return destination

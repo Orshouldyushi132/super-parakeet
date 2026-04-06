@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageDraw
 
-from .models import Measure, MidiProject, NoteEvent
+from .models import Measure, MidiProject
 
 
 BACKGROUND_COLOR = "#000000"
@@ -22,7 +22,7 @@ class _VisibleSegment:
     note_end_sec: float
 
 
-class MeasureRenderer:
+class ProjectRenderer:
     def __init__(self, project: MidiProject) -> None:
         self.project = project
         self._measure_start_seconds = [measure.start_sec for measure in project.measures]

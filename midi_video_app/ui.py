@@ -11,7 +11,7 @@ from PIL import ImageTk
 from .exporter import export_video
 from .midi_loader import load_midi_project
 from .models import MidiProject
-from .renderer import MeasureRenderer
+from .renderer import ProjectRenderer
 
 
 PREVIEW_WIDTH = 960
@@ -24,12 +24,12 @@ DEFAULT_FPS = 30
 class MidiVideoApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("MIDI Measure Video Exporter")
+        self.root.title("MIDI動画書き出しツール")
         self.root.geometry("1120x820")
         self.root.minsize(980, 720)
 
         self.project: MidiProject | None = None
-        self.renderer: MeasureRenderer | None = None
+        self.renderer: ProjectRenderer | None = None
         self.current_time_sec = 0.0
         self.playing = False
         self.playback_started_at = 0.0
@@ -38,10 +38,10 @@ class MidiVideoApp:
         self._preview_image: ImageTk.PhotoImage | None = None
         self._export_thread: threading.Thread | None = None
 
-        self.file_label_var = tk.StringVar(value="No MIDI file loaded")
-        self.status_var = tk.StringVar(value="Select a MIDI file to begin.")
+        self.file_label_var = tk.StringVar(value="MIDIファイルが読み込まれていません")
+        self.status_var = tk.StringVar(value="MIDIファイルを選択してください。")
         self.time_var = tk.StringVar(value="00:00.000 / 00:00.000")
-        self.measure_var = tk.StringVar(value="Measure: -")
+        self.measure_var = tk.StringVar(value="小節: -")
         self.fps_var = tk.StringVar(value=str(DEFAULT_FPS))
 
         self._build_ui()
@@ -56,12 +56,12 @@ class MidiVideoApp:
         controls = ttk.Frame(outer)
         controls.pack(fill="x")
 
-        ttk.Button(controls, text="Open MIDI", command=self.open_midi).pack(side="left")
-        ttk.Button(controls, text="Play / Pause", command=self.toggle_playback).pack(side="left", padx=(8, 0))
-        ttk.Button(controls, text="Stop", command=self.stop_playback).pack(side="left", padx=(8, 0))
-        ttk.Button(controls, text="Prev Measure", command=lambda: self.jump_measure(-1)).pack(side="left", padx=(8, 0))
-        ttk.Button(controls, text="Next Measure", command=lambda: self.jump_measure(1)).pack(side="left", padx=(8, 0))
-        ttk.Button(controls, text="Export MP4", command=self.export_mp4).pack(side="left", padx=(16, 0))
+        ttk.Button(controls, text="MIDIを開く", command=self.open_midi).pack(side="left")
+        ttk.Button(controls, text="再生 / 一時停止", command=self.toggle_playback).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="停止", command=self.stop_playback).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="前の小節へ", command=lambda: self.jump_measure(-1)).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="次の小節へ", command=lambda: self.jump_measure(1)).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="MP4を書き出す", command=self.export_mp4).pack(side="left", padx=(16, 0))
 
         fps_frame = ttk.Frame(controls)
         fps_frame.pack(side="right")
@@ -94,42 +94,42 @@ class MidiVideoApp:
 
     def open_midi(self) -> None:
         midi_path = filedialog.askopenfilename(
-            title="Select MIDI file",
-            filetypes=[("MIDI files", "*.mid *.midi"), ("All files", "*.*")],
+            title="MIDIファイルを選択",
+            filetypes=[("MIDIファイル", "*.mid *.midi"), ("すべてのファイル", "*.*")],
         )
         if not midi_path:
             return
 
-        self.status_var.set("Loading MIDI...")
+        self.status_var.set("MIDIを読み込み中...")
         self.root.update_idletasks()
 
         try:
             self.project = load_midi_project(midi_path)
-            self.renderer = MeasureRenderer(self.project)
+            self.renderer = ProjectRenderer(self.project)
         except Exception as error:
             self.project = None
             self.renderer = None
-            messagebox.showerror("MIDI load failed", str(error))
-            self.status_var.set("Failed to load MIDI file.")
+            messagebox.showerror("MIDIの読み込みに失敗しました", str(error))
+            self.status_var.set("MIDIの読み込みに失敗しました。")
             return
 
         self.current_time_sec = 0.0
         self.playing = False
         self.timeline.configure(to=max(self.project.duration_sec, 0.001))
         self.file_label_var.set(str(Path(midi_path)))
-        self.status_var.set("MIDI loaded.")
+        self.status_var.set("MIDIを読み込みました。小節ごとの切り替え表示でプレビューできます。")
         self.progress.configure(value=0.0)
         self._refresh_preview()
 
     def toggle_playback(self) -> None:
         if not self.project:
-            messagebox.showinfo("Open a MIDI file", "Load a MIDI file before starting playback.")
+            messagebox.showinfo("MIDIを開いてください", "再生する前にMIDIファイルを読み込んでください。")
             return
 
         if self.playing:
             self.playing = False
             self.playback_origin_sec = self.current_time_sec
-            self.status_var.set("Playback paused.")
+            self.status_var.set("再生を一時停止しました。")
             return
 
         if self.current_time_sec >= self.project.duration_sec:
@@ -138,13 +138,13 @@ class MidiVideoApp:
         self.playing = True
         self.playback_origin_sec = self.current_time_sec
         self.playback_started_at = time.perf_counter()
-        self.status_var.set("Playback running.")
+        self.status_var.set("再生中...")
 
     def stop_playback(self) -> None:
         self.playing = False
         self.current_time_sec = 0.0
         self.playback_origin_sec = 0.0
-        self.status_var.set("Playback stopped.")
+        self.status_var.set("停止しました。")
         self._refresh_preview()
 
     def jump_measure(self, direction: int) -> None:
@@ -156,37 +156,37 @@ class MidiVideoApp:
         self.playing = False
         self.current_time_sec = self.project.measures[target_index].start_sec
         self.playback_origin_sec = self.current_time_sec
-        self.status_var.set(f"Moved to measure {target_index + 1}.")
+        self.status_var.set(f"{target_index + 1}小節目へ移動しました。")
         self._refresh_preview()
 
     def export_mp4(self) -> None:
         if not self.project or not self.renderer:
-            messagebox.showinfo("Open a MIDI file", "Load a MIDI file before exporting a video.")
+            messagebox.showinfo("MIDIを開いてください", "動画を書き出す前にMIDIファイルを読み込んでください。")
             return
 
         if self._export_thread and self._export_thread.is_alive():
-            messagebox.showinfo("Export running", "A video export is already in progress.")
+            messagebox.showinfo("書き出し中です", "すでに動画の書き出しを実行中です。")
             return
 
         try:
             fps = max(1, int(self.fps_var.get()))
         except ValueError:
-            messagebox.showerror("Invalid FPS", "FPS must be a whole number.")
+            messagebox.showerror("FPSが不正です", "FPSには整数を入力してください。")
             return
 
-        default_name = f"{self.project.source_path.stem}_measure_view.mp4"
+        default_name = f"{self.project.source_path.stem}_小節切り替え.mp4"
         output_path = filedialog.asksaveasfilename(
-            title="Save exported MP4",
+            title="MP4の保存先を選択",
             defaultextension=".mp4",
             initialfile=default_name,
-            filetypes=[("MP4 video", "*.mp4")],
+            filetypes=[("MP4動画", "*.mp4")],
         )
         if not output_path:
             return
 
         self.playing = False
         self.progress.configure(value=0.0)
-        self.status_var.set("Starting export...")
+        self.status_var.set("小節ごとの切り替え表示で動画を書き出します...")
 
         def progress_callback(progress_value: float, message: str) -> None:
             self.root.after(0, lambda: self._update_export_progress(progress_value, message))
@@ -203,12 +203,12 @@ class MidiVideoApp:
                     progress_callback=progress_callback,
                 )
             except Exception as error:
-                self.root.after(0, lambda: messagebox.showerror("Export failed", str(error)))
-                self.root.after(0, lambda: self.status_var.set("Export failed."))
+                self.root.after(0, lambda: messagebox.showerror("書き出しに失敗しました", str(error)))
+                self.root.after(0, lambda: self.status_var.set("書き出しに失敗しました。"))
                 return
 
-            self.root.after(0, lambda: messagebox.showinfo("Export complete", f"Video saved to:\n{output_path}"))
-            self.root.after(0, lambda: self.status_var.set("Export complete."))
+            self.root.after(0, lambda: messagebox.showinfo("書き出し完了", f"動画を保存しました:\n{output_path}"))
+            self.root.after(0, lambda: self.status_var.set("書き出しが完了しました。"))
 
         self._export_thread = threading.Thread(target=run_export, daemon=True)
         self._export_thread.start()
@@ -243,7 +243,7 @@ class MidiVideoApp:
             if self.current_time_sec >= self.project.duration_sec:
                 self.current_time_sec = self.project.duration_sec
                 self.playing = False
-                self.status_var.set("Playback finished.")
+                self.status_var.set("再生が終了しました。")
                 needs_refresh = True
 
         if needs_refresh:
@@ -253,7 +253,7 @@ class MidiVideoApp:
         if not self.project or not self.renderer:
             self.preview_label.configure(image="")
             self.time_var.set("00:00.000 / 00:00.000")
-            self.measure_var.set("Measure: -")
+            self.measure_var.set("小節: -")
             return
 
         frame = self.renderer.render_frame(self.current_time_sec, PREVIEW_WIDTH, PREVIEW_HEIGHT)
@@ -269,7 +269,7 @@ class MidiVideoApp:
         current_measure = self.renderer.get_measure_for_time(self.current_time_sec)
         self.time_var.set(f"{current_time} / {total_time}")
         self.measure_var.set(
-            f"Measure: {current_measure.index + 1} / {self.project.measure_count} ({current_measure.numerator}/{current_measure.denominator})"
+            f"現在小節: {current_measure.index + 1} / {self.project.measure_count} ({current_measure.numerator}/{current_measure.denominator})"
         )
 
     def _update_export_progress(self, progress_value: float, message: str) -> None:
