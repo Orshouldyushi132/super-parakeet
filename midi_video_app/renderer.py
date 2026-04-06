@@ -38,6 +38,14 @@ class _ActiveRenderItem:
     state: _AnimationState
 
 
+@dataclass(slots=True)
+class _TrailRenderItem:
+    rect: tuple[float, float, float, float]
+    age_ratio: float
+    is_active: bool
+    state: _AnimationState | None = None
+
+
 class ProjectRenderer:
     def __init__(self, project: MidiProject, settings: RenderSettings | None = None) -> None:
         self.project = project
@@ -85,6 +93,9 @@ class ProjectRenderer:
         min_rectangle_width = max(2.0, width * 0.001)
 
         active_items: list[_ActiveRenderItem] = []
+        trail_items: list[_TrailRenderItem] = []
+        trail_window_sec = self._afterimage_window_sec()
+        afterimage_enabled = self._resolved_afterimage_style() != "none"
 
         for segment in note_segments:
             x0 = left_padding + plot_width * segment.start_ratio
@@ -103,16 +114,34 @@ class ProjectRenderer:
                 animated_rect = self._animated_rect(rect, state)
                 radius = self._rect_radius(animated_rect)
                 active_items.append(_ActiveRenderItem(base_rect=rect, rect=animated_rect, radius=radius, state=state))
+                if afterimage_enabled:
+                    trail_items.append(_TrailRenderItem(rect=animated_rect, age_ratio=0.0, is_active=True, state=state))
                 self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, radius, state)
             else:
                 self._draw_idle_segment(draw, rect)
+                if afterimage_enabled:
+                    note_age_sec = clamped_time - segment.note_end_sec
+                    if 0.0 <= note_age_sec <= trail_window_sec:
+                        trail_items.append(
+                            _TrailRenderItem(
+                                rect=rect,
+                                age_ratio=_clamp(note_age_sec / max(trail_window_sec, 1e-6)),
+                                is_active=False,
+                            )
+                        )
 
         glow_layer = self._finalize_glow_layer(glow_layer, width, height)
         image.alpha_composite(glow_layer)
         image.alpha_composite(crisp_glow_layer)
 
+        for item in sorted((trail for trail in trail_items if not trail.is_active), key=lambda trail: trail.age_ratio, reverse=True):
+            self._draw_afterimage(draw, item)
+        for item in trail_items:
+            if item.is_active:
+                self._draw_afterimage(draw, item)
+
         for item in active_items:
-            self._draw_active_segment(draw, item.base_rect, item.rect, item.radius, item.state)
+            self._draw_active_segment(draw, item.rect, item.radius, item.state)
 
         return image.convert("RGB")
 
@@ -123,13 +152,10 @@ class ProjectRenderer:
     def _draw_active_segment(
         self,
         draw: ImageDraw.ImageDraw,
-        base_rect: tuple[float, float, float, float],
         rect: tuple[float, float, float, float],
         radius: float,
         state: _AnimationState,
     ) -> None:
-        self._draw_afterimage(draw, base_rect, rect, state)
-
         fill_color = self._active_fill_color(state)
         draw.rounded_rectangle(rect, radius=radius, fill=fill_color)
 
@@ -144,50 +170,54 @@ class ProjectRenderer:
 
         self._draw_animation_overlay(draw, rect, radius, state)
 
-    def _draw_afterimage(
-        self,
-        draw: ImageDraw.ImageDraw,
-        base_rect: tuple[float, float, float, float],
-        rect: tuple[float, float, float, float],
-        state: _AnimationState,
-    ) -> None:
+    def _draw_afterimage(self, draw: ImageDraw.ImageDraw, item: _TrailRenderItem) -> None:
         style = self._resolved_afterimage_style()
         strength = self.settings.afterimage_strength * max(0.2, self.settings.animation_strength)
         if style == "none" or strength <= 0.0 or self.settings.animation_style == "none":
             return
 
-        motion_amount = sum(abs(rect[index] - base_rect[index]) for index in range(4))
-        if motion_amount < 1.25:
+        rect = item.rect
+        age_ratio = _clamp(item.age_ratio)
+        visibility = strength * ((1.0 - age_ratio) ** 0.82)
+        if not item.is_active and visibility <= 0.03:
             return
 
-        accent_mix = 0.35 + 0.35 * state.wave
-        fill_color = _mix_colors(self.settings.active_note_color, self.settings.animation_accent_color, accent_mix)
-        outline_color = _mix_colors(self.settings.outline_color, self.settings.animation_accent_color, 0.5)
-        steps = max(2, min(6, int(round(2 + strength * 4.0))))
+        state = item.state
+        emphasis = 1.0 if state is None else 0.45 + state.wave * 0.55
+        outer_rect = self._afterimage_frame_rect(rect, item.is_active, visibility, emphasis)
+        outer_radius = self._rect_radius(outer_rect)
 
-        for step in range(1, steps + 1):
-            amount = step / (steps + 1)
-            ghost_rect = _lerp_rect(base_rect, rect, amount * 0.96)
-            ghost_radius = self._rect_radius(ghost_rect)
-            fade = (1.0 - amount * 0.74) * strength
-            fill_alpha = int(88 * fade)
-            outline_alpha = int(168 * fade)
-            line_width = max(1, int((ghost_rect[3] - ghost_rect[1]) * (0.08 + (1.0 - amount) * 0.06)))
+        if item.is_active:
+            outline_color = _with_alpha(self.settings.outline_color, int(220 * _clamp(0.55 + visibility * 0.7)))
+            glow_outline = _with_alpha(self.settings.outline_color, int(92 * _clamp(0.35 + visibility)))
+            fill_color = _with_alpha(self.settings.active_note_color, int(44 * _clamp(0.2 + visibility)))
+        else:
+            outline_mix = 0.78
+            outline_tuple = _mix_colors(self.settings.outline_color, self.settings.idle_note_color, outline_mix)
+            outline_color = (outline_tuple[0], outline_tuple[1], outline_tuple[2], int(122 * visibility))
+            glow_outline = (outline_tuple[0], outline_tuple[1], outline_tuple[2], int(48 * visibility))
+            fill_tuple = _mix_colors(self.settings.active_note_color, self.settings.idle_note_color, 0.78)
+            fill_color = (fill_tuple[0], fill_tuple[1], fill_tuple[2], int(28 * visibility))
 
-            if style in {"fill", "both"}:
-                draw.rounded_rectangle(
-                    ghost_rect,
-                    radius=ghost_radius,
-                    fill=(fill_color[0], fill_color[1], fill_color[2], fill_alpha),
-                )
+        frame_width = max(1, int((outer_rect[3] - outer_rect[1]) * (0.08 if item.is_active else 0.065)))
 
-            if style in {"outline", "both"}:
-                draw.rounded_rectangle(
-                    ghost_rect,
-                    radius=ghost_radius,
-                    outline=(outline_color[0], outline_color[1], outline_color[2], outline_alpha),
-                    width=line_width,
-                )
+        if style in {"fill", "both"}:
+            draw.rounded_rectangle(outer_rect, radius=outer_radius, fill=fill_color)
+
+        if style in {"outline", "both"}:
+            halo_rect = _expand_rect(outer_rect, 1.5, 1.5)
+            draw.rounded_rectangle(
+                halo_rect,
+                radius=self._rect_radius(halo_rect),
+                outline=glow_outline,
+                width=max(1, frame_width + 1),
+            )
+            draw.rounded_rectangle(
+                outer_rect,
+                radius=outer_radius,
+                outline=outline_color,
+                width=frame_width,
+            )
 
     def _resolved_afterimage_style(self) -> str:
         style = self.settings.afterimage_style
@@ -202,6 +232,29 @@ class ProjectRenderer:
         if animation_style == "none":
             return "none"
         return "outline"
+
+    def _afterimage_window_sec(self) -> float:
+        speed = max(0.75, self.settings.animation_speed)
+        strength = _clamp(self.settings.afterimage_strength, 0.0, 1.5)
+        return max(0.06, min(0.36, (0.06 + 0.24 * strength) / speed))
+
+    def _afterimage_frame_rect(
+        self,
+        rect: tuple[float, float, float, float],
+        is_active: bool,
+        visibility: float,
+        emphasis: float,
+    ) -> tuple[float, float, float, float]:
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+        horizontal_pad = max(width * 0.08, height * (0.5 + 0.18 * visibility + 0.08 * emphasis))
+        vertical_pad = height * (0.24 + 0.08 * visibility + 0.04 * emphasis)
+
+        if is_active:
+            horizontal_pad += height * 0.1
+            vertical_pad += height * 0.05
+
+        return _expand_rect(rect, horizontal_pad, vertical_pad)
 
     def _build_animation_state(self, segment: _VisibleSegment, time_sec: float) -> _AnimationState:
         duration = max(segment.note_end_sec - segment.note_start_sec, 1e-6)
@@ -507,6 +560,7 @@ class ProjectRenderer:
         width = rect[2] - rect[0]
         height = rect[3] - rect[1]
         accent = self.settings.animation_accent_color
+        afterimage_style = self._resolved_afterimage_style()
 
         if style == "none":
             return
@@ -528,19 +582,27 @@ class ProjectRenderer:
             return
 
         if style == "pop":
-            pop_rect = _expand_rect(rect, height * 0.14 * (0.25 + state.burst), height * 0.14 * (0.25 + state.burst))
-            draw.rounded_rectangle(
-                pop_rect,
-                radius=self._rect_radius(pop_rect),
-                outline=_with_alpha(accent, int(165 * (0.2 + state.burst * 0.8))),
-                width=max(1, int(height * 0.12)),
-            )
             inner_rect = _inset_rect(rect, width * 0.12, height * 0.18)
-            draw.rounded_rectangle(
-                inner_rect,
-                radius=max(1.0, self._rect_radius(inner_rect) * 0.8),
-                fill=_with_alpha(self.settings.outline_color, int(40 + 65 * state.burst)),
-            )
+            if afterimage_style in {"outline", "both"}:
+                draw.rounded_rectangle(
+                    inner_rect,
+                    radius=max(1.0, self._rect_radius(inner_rect) * 0.8),
+                    outline=_with_alpha(self.settings.outline_color, int(115 + 70 * state.burst)),
+                    width=max(1, int(height * 0.08)),
+                )
+            else:
+                pop_rect = _expand_rect(rect, height * 0.14 * (0.25 + state.burst), height * 0.14 * (0.25 + state.burst))
+                draw.rounded_rectangle(
+                    pop_rect,
+                    radius=self._rect_radius(pop_rect),
+                    outline=_with_alpha(accent, int(165 * (0.2 + state.burst * 0.8))),
+                    width=max(1, int(height * 0.12)),
+                )
+                draw.rounded_rectangle(
+                    inner_rect,
+                    radius=max(1.0, self._rect_radius(inner_rect) * 0.8),
+                    fill=_with_alpha(self.settings.outline_color, int(40 + 65 * state.burst)),
+                )
             return
 
         if style == "scan":
@@ -600,15 +662,16 @@ class ProjectRenderer:
             return
 
         if style == "pulse":
-            ring_rect = _expand_rect(rect, height * 0.08 * (0.2 + state.wave), height * 0.08 * (0.2 + state.wave))
-            draw.rounded_rectangle(
-                ring_rect,
-                radius=self._rect_radius(ring_rect),
-                outline=_with_alpha(accent, int(145 * (0.3 + state.wave * 0.7))),
-                width=max(1, int(height * 0.1)),
-            )
             shine_height = height * (0.22 + 0.1 * state.wave)
             highlight_rect = _inset_rect((rect[0], rect[1], rect[2], rect[1] + shine_height), 1.0, 1.0)
+            if afterimage_style not in {"outline", "both"}:
+                ring_rect = _expand_rect(rect, height * 0.08 * (0.2 + state.wave), height * 0.08 * (0.2 + state.wave))
+                draw.rounded_rectangle(
+                    ring_rect,
+                    radius=self._rect_radius(ring_rect),
+                    outline=_with_alpha(accent, int(145 * (0.3 + state.wave * 0.7))),
+                    width=max(1, int(height * 0.1)),
+                )
             draw.rounded_rectangle(
                 highlight_rect,
                 radius=max(1.0, radius * 0.6),
@@ -765,14 +828,6 @@ def _clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
 
 def _lerp(start: float, end: float, amount: float) -> float:
     return start + (end - start) * _clamp(amount)
-
-
-def _lerp_rect(
-    rect_a: tuple[float, float, float, float],
-    rect_b: tuple[float, float, float, float],
-    amount: float,
-) -> tuple[float, float, float, float]:
-    return tuple(_lerp(rect_a[index], rect_b[index], amount) for index in range(4))
 
 
 def _expand_rect(rect: tuple[float, float, float, float], expand_x: float, expand_y: float) -> tuple[float, float, float, float]:
