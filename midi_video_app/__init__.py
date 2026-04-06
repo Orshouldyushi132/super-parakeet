@@ -1,0 +1,1 @@
+"""MIDI video exporter package."""
