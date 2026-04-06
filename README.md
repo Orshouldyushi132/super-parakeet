@@ -24,6 +24,23 @@ python main.py
 
 Or double-click `run.bat`.
 
+## Build EXE
+
+```powershell
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --noconfirm MidiMeasureVideoExporter.spec
+```
+
+Or run `build_exe.bat`.
+
+The generated executable will be placed at:
+
+```text
+dist\MidiMeasureVideoExporter\MidiMeasureVideoExporter.exe
+```
+
+Keep the whole `dist\MidiMeasureVideoExporter` folder together when moving or sharing it, because the EXE uses bundled runtime files inside `_internal`.
+
 ## Use
 
 1. Open a `.mid` or `.midi` file.
@@ -35,3 +52,4 @@ Or double-click `run.bat`.
 - Audio is not included in the exported video.
 - All MIDI tracks are merged into a single note view.
 - Time signature changes are supported. Each measure is rendered as its own fixed screen.
+- The packaged EXE includes the FFmpeg runtime needed for MP4 export.
