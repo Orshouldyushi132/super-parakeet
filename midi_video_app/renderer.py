@@ -8,6 +8,11 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from .models import Measure, MidiProject, RenderSettings
 
+try:
+    import aggdraw
+except ImportError:  # pragma: no cover - optional dependency
+    aggdraw = None
+
 
 @dataclass(slots=True)
 class _VisibleSegment:
@@ -33,14 +38,14 @@ class _AnimationState:
 @dataclass(slots=True)
 class _ActiveRenderItem:
     base_rect: tuple[float, float, float, float]
-    rect: tuple[float, float, float, float]
-    radius: float
+    frame_rect: tuple[float, float, float, float]
     state: _AnimationState
 
 
 @dataclass(slots=True)
 class _TrailRenderItem:
-    rect: tuple[float, float, float, float]
+    base_rect: tuple[float, float, float, float]
+    frame_rect: tuple[float, float, float, float]
     age_ratio: float
     is_active: bool
     state: _AnimationState | None = None
@@ -48,9 +53,70 @@ class _TrailRenderItem:
 
 @dataclass(slots=True)
 class _ReleaseRenderItem:
-    rect: tuple[float, float, float, float]
+    base_rect: tuple[float, float, float, float]
+    frame_rect: tuple[float, float, float, float]
     age_ratio: float
     state: _AnimationState
+
+
+@dataclass(slots=True)
+class _PreparedSegment:
+    segment: _VisibleSegment
+    rect: tuple[float, float, float, float]
+
+
+class _LayerContext:
+    def __init__(self, image: Image.Image) -> None:
+        self.image = image
+        self.draw = ImageDraw.Draw(image, "RGBA")
+        self._agg = aggdraw.Draw(image) if aggdraw is not None else None
+        if self._agg is not None:
+            self._agg.setantialias(True)
+
+    def flush(self) -> None:
+        if self._agg is not None:
+            self._agg.flush()
+
+    def rounded_rectangle(
+        self,
+        rect: tuple[float, float, float, float],
+        radius: float,
+        fill: tuple[int, int, int, int] | None = None,
+        outline: tuple[int, int, int, int] | None = None,
+        width: int = 1,
+    ) -> None:
+        normalized = _normalize_rect(rect)
+        if self._agg is None:
+            self.draw.rounded_rectangle(normalized, radius=radius, fill=fill, outline=outline, width=width)
+            return
+
+        pen = None if outline is None or width <= 0 else aggdraw.Pen(outline, width)
+        brush = None if fill is None else aggdraw.Brush(fill)
+        self._agg.rounded_rectangle(normalized, max(0.0, float(radius)), pen, brush)
+
+    def rectangle(
+        self,
+        rect: tuple[float, float, float, float],
+        fill: tuple[int, int, int, int] | None = None,
+        outline: tuple[int, int, int, int] | None = None,
+        width: int = 1,
+    ) -> None:
+        self.draw.rectangle(_normalize_rect(rect), fill=fill, outline=outline, width=width)
+
+    def line(
+        self,
+        points: tuple[float, float, float, float],
+        fill: tuple[int, int, int, int],
+        width: int = 1,
+    ) -> None:
+        self.draw.line(points, fill=fill, width=width)
+
+    def polygon(
+        self,
+        points: list[tuple[float, float]] | tuple[tuple[float, float], ...],
+        fill: tuple[int, int, int, int],
+    ) -> None:
+        self.draw.polygon(points, fill=fill)
 
 
 class ProjectRenderer:
@@ -59,9 +125,14 @@ class ProjectRenderer:
         self.settings = settings or RenderSettings()
         self._measure_start_seconds = [measure.start_sec for measure in project.measures]
         self._measure_segments = self._build_measure_segments(project)
+        self._measure_render_cache: dict[
+            tuple[int, int, int, tuple[object, ...]],
+            tuple[Image.Image, tuple[_PreparedSegment, ...]],
+        ] = {}
 
     def set_settings(self, settings: RenderSettings) -> None:
         self.settings = settings
+        self._measure_render_cache.clear()
 
     def get_measure_for_time(self, time_sec: float) -> Measure:
         if time_sec <= 0:
@@ -77,14 +148,98 @@ class ProjectRenderer:
         settings = self.settings
         clamped_time = max(0.0, min(time_sec, max(self.project.duration_sec - 1e-6, 0.0)))
         measure = self.get_measure_for_time(clamped_time)
-        note_segments = self._measure_segments[measure.index]
-
-        image = Image.new("RGBA", (width, height), _with_alpha(settings.background_color, 255))
-        draw = ImageDraw.Draw(image, "RGBA")
+        image, prepared_segments = self._get_prepared_measure(measure, width, height)
+        image = image.copy()
+        draw = _LayerContext(image)
         glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        glow_draw = ImageDraw.Draw(glow_layer, "RGBA")
+        glow_draw = _LayerContext(glow_layer)
         crisp_glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        crisp_glow_draw = ImageDraw.Draw(crisp_glow_layer, "RGBA")
+        crisp_glow_draw = _LayerContext(crisp_glow_layer)
+
+        active_items: list[_ActiveRenderItem] = []
+        trail_items: list[_TrailRenderItem] = []
+        release_items: list[_ReleaseRenderItem] = []
+        trail_window_sec = self._afterimage_window_sec()
+        afterimage_enabled = (
+            self._resolved_afterimage_style() != "none"
+            and trail_window_sec > 0.0
+            and self.settings.afterimage_strength > 0.0
+        )
+        release_window_sec = self._release_fade_window_sec()
+        release_enabled = self.settings.release_fade_style != "none" and release_window_sec > 0.0
+
+        for prepared in prepared_segments:
+            segment = prepared.segment
+            rect = prepared.rect
+            if segment.note_start_sec <= clamped_time < segment.note_end_sec:
+                state = self._build_animation_state(segment, clamped_time)
+                animated_rect = self._animated_rect(rect, state)
+                active_items.append(_ActiveRenderItem(base_rect=rect, frame_rect=animated_rect, state=state))
+                if afterimage_enabled:
+                    trail_items.append(
+                        _TrailRenderItem(
+                            base_rect=rect,
+                            frame_rect=animated_rect,
+                            age_ratio=0.0,
+                            is_active=True,
+                            state=state,
+                        )
+                    )
+                self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, self._rect_radius(animated_rect), state)
+            else:
+                note_age_sec = clamped_time - segment.note_end_sec
+                if release_enabled and 0.0 <= note_age_sec <= release_window_sec:
+                    release_state = self._build_animation_state(
+                        segment,
+                        max(segment.note_start_sec, segment.note_end_sec - 1e-4),
+                    )
+                    release_items.append(
+                        _ReleaseRenderItem(
+                            base_rect=rect,
+                            frame_rect=self._animated_rect(rect, release_state),
+                            age_ratio=_clamp(note_age_sec / max(release_window_sec, 1e-6)),
+                            state=release_state,
+                        )
+                    )
+                if afterimage_enabled:
+                    if 0.0 <= note_age_sec <= trail_window_sec:
+                        trail_items.append(
+                            _TrailRenderItem(
+                                base_rect=rect,
+                                frame_rect=rect,
+                                age_ratio=_clamp(note_age_sec / max(trail_window_sec, 1e-6)),
+                                is_active=False,
+                            )
+                        )
+
+        glow_draw.flush()
+        crisp_glow_draw.flush()
+        glow_layer = self._finalize_glow_layer(glow_layer, width, height)
+        image.alpha_composite(glow_layer)
+        image.alpha_composite(crisp_glow_layer)
+
+        for item in sorted((trail for trail in trail_items if not trail.is_active), key=lambda trail: trail.age_ratio, reverse=True):
+            self._draw_afterimage(draw, item)
+        for item in trail_items:
+            if item.is_active:
+                self._draw_afterimage(draw, item)
+        for item in sorted(release_items, key=lambda release: release.age_ratio, reverse=True):
+            self._draw_release_fade(draw, item)
+
+        for item in active_items:
+            self._draw_active_segment(draw, item.base_rect, item.frame_rect, item.state)
+
+        draw.flush()
+        return image.convert("RGB")
+
+    def _get_prepared_measure(self, measure: Measure, width: int, height: int) -> tuple[Image.Image, tuple[_PreparedSegment, ...]]:
+        cache_key = (measure.index, width, height, self._cache_signature())
+        cached = self._measure_render_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        image = Image.new("RGBA", (width, height), _with_alpha(self.settings.background_color, 255))
+        draw = _LayerContext(image)
 
         horizontal_padding = width * self.settings.horizontal_padding_ratio
         vertical_padding = height * self.settings.vertical_padding_ratio
@@ -101,19 +256,8 @@ class ProjectRenderer:
         rectangle_height = max(2.0, lane_height * 0.6)
         min_rectangle_width = max(2.0, width * 0.001)
 
-        active_items: list[_ActiveRenderItem] = []
-        trail_items: list[_TrailRenderItem] = []
-        release_items: list[_ReleaseRenderItem] = []
-        trail_window_sec = self._afterimage_window_sec()
-        afterimage_enabled = (
-            self._resolved_afterimage_style() != "none"
-            and trail_window_sec > 0.0
-            and self.settings.afterimage_strength > 0.0
-        )
-        release_window_sec = self._release_fade_window_sec()
-        release_enabled = self.settings.release_fade_style != "none" and release_window_sec > 0.0
-
-        for segment in note_segments:
+        prepared_segments: list[_PreparedSegment] = []
+        for segment in self._measure_segments[measure.index]:
             x0 = left_padding + plot_width * segment.start_ratio
             x1 = left_padding + plot_width * segment.end_ratio
             if x1 - x0 < min_rectangle_width:
@@ -124,58 +268,29 @@ class ProjectRenderer:
             y0 = lane_top + (lane_height - rectangle_height) / 2.0
             y1 = y0 + rectangle_height
             rect = self._scaled_note_rect((x0, y0, x1, y1), min_rectangle_width)
+            prepared_segments.append(_PreparedSegment(segment=segment, rect=rect))
+            self._draw_idle_segment(draw, rect)
 
-            if segment.note_start_sec <= clamped_time < segment.note_end_sec:
-                state = self._build_animation_state(segment, clamped_time)
-                animated_rect = self._animated_rect(rect, state)
-                radius = self._rect_radius(animated_rect)
-                active_items.append(_ActiveRenderItem(base_rect=rect, rect=animated_rect, radius=radius, state=state))
-                if afterimage_enabled:
-                    trail_items.append(_TrailRenderItem(rect=animated_rect, age_ratio=0.0, is_active=True, state=state))
-                self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, radius, state)
-            else:
-                self._draw_idle_segment(draw, rect)
-                note_age_sec = clamped_time - segment.note_end_sec
-                if release_enabled and 0.0 <= note_age_sec <= release_window_sec:
-                    release_state = self._build_animation_state(
-                        segment,
-                        max(segment.note_start_sec, segment.note_end_sec - 1e-4),
-                    )
-                    release_items.append(
-                        _ReleaseRenderItem(
-                            rect=self._animated_rect(rect, release_state),
-                            age_ratio=_clamp(note_age_sec / max(release_window_sec, 1e-6)),
-                            state=release_state,
-                        )
-                    )
-                if afterimage_enabled:
-                    if 0.0 <= note_age_sec <= trail_window_sec:
-                        trail_items.append(
-                            _TrailRenderItem(
-                                rect=rect,
-                                age_ratio=_clamp(note_age_sec / max(trail_window_sec, 1e-6)),
-                                is_active=False,
-                            )
-                        )
+        draw.flush()
+        prepared = (image, tuple(prepared_segments))
+        self._measure_render_cache[cache_key] = prepared
+        return prepared
 
-        glow_layer = self._finalize_glow_layer(glow_layer, width, height)
-        image.alpha_composite(glow_layer)
-        image.alpha_composite(crisp_glow_layer)
+    def _cache_signature(self) -> tuple[object, ...]:
+        settings = self.settings
+        return (
+            settings.background_color,
+            settings.idle_note_color,
+            settings.outline_color,
+            settings.corner_style,
+            settings.note_length_scale,
+            settings.note_height_scale,
+            settings.horizontal_padding_ratio,
+            settings.vertical_padding_ratio,
+            settings.idle_outline_width,
+        )
 
-        for item in sorted((trail for trail in trail_items if not trail.is_active), key=lambda trail: trail.age_ratio, reverse=True):
-            self._draw_afterimage(draw, item)
-        for item in trail_items:
-            if item.is_active:
-                self._draw_afterimage(draw, item)
-        for item in sorted(release_items, key=lambda release: release.age_ratio, reverse=True):
-            self._draw_release_fade(draw, item)
-
-        for item in active_items:
-            self._draw_active_segment(draw, item.rect, item.radius, item.state)
-
-        return image.convert("RGB")
-
-    def _draw_idle_segment(self, draw: ImageDraw.ImageDraw, rect: tuple[float, float, float, float]) -> None:
+    def _draw_idle_segment(self, draw: _LayerContext, rect: tuple[float, float, float, float]) -> None:
         radius = self._rect_radius(rect)
         draw.rounded_rectangle(rect, radius=radius, fill=_with_alpha(self.settings.idle_note_color, 255))
         outline_width = self._outline_width(rect, 0.08, self.settings.idle_outline_width)
@@ -189,61 +304,65 @@ class ProjectRenderer:
 
     def _draw_active_segment(
         self,
-        draw: ImageDraw.ImageDraw,
-        rect: tuple[float, float, float, float],
-        radius: float,
+        draw: _LayerContext,
+        base_rect: tuple[float, float, float, float],
+        frame_rect: tuple[float, float, float, float],
         state: _AnimationState,
     ) -> None:
         fill_color = self._active_fill_color(state)
-        draw.rounded_rectangle(rect, radius=radius, fill=fill_color)
+        base_radius = self._rect_radius(base_rect)
+        frame_radius = self._rect_radius(frame_rect)
+        draw.rounded_rectangle(base_rect, radius=base_radius, fill=fill_color)
 
         outline_alpha = 225 if self.settings.glow_style in {"neon", "outline", "prism"} else 175
-        outline_width = self._outline_width(rect, 0.12, self.settings.active_outline_width)
+        outline_width = self._outline_width(base_rect, 0.12, self.settings.active_outline_width)
         if outline_width > 0:
             draw.rounded_rectangle(
-                rect,
-                radius=radius,
+                base_rect,
+                radius=base_radius,
                 outline=_with_alpha(self.settings.outline_color, outline_alpha),
                 width=outline_width,
             )
 
-        self._draw_animation_overlay(draw, rect, radius, state)
+        self._draw_animation_overlay(draw, base_rect, frame_rect, base_radius, frame_radius, state)
 
-    def _draw_release_fade(self, draw: ImageDraw.ImageDraw, item: _ReleaseRenderItem) -> None:
+    def _draw_release_fade(self, draw: _LayerContext, item: _ReleaseRenderItem) -> None:
         style = self.settings.release_fade_style
         visibility = self._release_fade_visibility(item.age_ratio)
         if style == "none" or visibility <= 0.01:
             return
 
-        rect = item.rect
-        radius = self._rect_radius(rect)
+        base_rect = item.base_rect
+        frame_rect = item.frame_rect
+        base_radius = self._rect_radius(base_rect)
+        frame_radius = self._rect_radius(frame_rect)
         fill_color = self._active_fill_color(item.state)
 
         if style in {"fill", "both"}:
             draw.rounded_rectangle(
-                rect,
-                radius=radius,
+                base_rect,
+                radius=base_radius,
                 fill=(fill_color[0], fill_color[1], fill_color[2], int(190 * visibility)),
             )
 
         if style in {"outline", "both"}:
-            outline_width = self._outline_width(rect, 0.12, self.settings.active_outline_width)
+            outline_width = self._outline_width(frame_rect, 0.12, self.settings.active_outline_width)
             if outline_width > 0:
                 outline_alpha = 205 if self.settings.glow_style in {"neon", "outline", "prism"} else 155
                 draw.rounded_rectangle(
-                    rect,
-                    radius=radius,
+                    frame_rect,
+                    radius=frame_radius,
                     outline=_with_alpha(self.settings.outline_color, int(outline_alpha * visibility)),
                     width=outline_width,
                 )
 
-    def _draw_afterimage(self, draw: ImageDraw.ImageDraw, item: _TrailRenderItem) -> None:
+    def _draw_afterimage(self, draw: _LayerContext, item: _TrailRenderItem) -> None:
         style = self._resolved_afterimage_style()
         strength = self.settings.afterimage_strength * max(0.2, self.settings.animation_strength)
         if style == "none" or strength <= 0.0 or self.settings.animation_style == "none":
             return
 
-        rect = item.rect
+        rect = item.frame_rect if item.is_active else item.base_rect
         age_ratio = _clamp(item.age_ratio)
         visibility = strength * ((1.0 - age_ratio) ** 0.82)
         if not item.is_active and visibility <= 0.03:
@@ -319,12 +438,13 @@ class ProjectRenderer:
     ) -> tuple[float, float, float, float]:
         width = rect[2] - rect[0]
         height = rect[3] - rect[1]
-        horizontal_pad = max(width * 0.08, height * (0.5 + 0.18 * visibility + 0.08 * emphasis))
-        vertical_pad = height * (0.24 + 0.08 * visibility + 0.04 * emphasis)
+        base_pad = max(height * (0.42 + 0.18 * visibility + 0.12 * emphasis), min(width, height) * 0.16)
+        horizontal_pad = base_pad * (1.1 + min(0.34, width / max(height, 1.0) * 0.035))
+        vertical_pad = base_pad * (0.92 + visibility * 0.28)
 
         if is_active:
             horizontal_pad += height * 0.1
-            vertical_pad += height * 0.05
+            vertical_pad += height * 0.12
 
         padding_scale = max(0.0, self.settings.afterimage_padding_scale)
         horizontal_pad *= padding_scale
@@ -377,67 +497,56 @@ class ProjectRenderer:
 
         expand_x = 0.0
         expand_y = 0.0
-        shift_y = 0.0
-        shift_x = 0.0
-
         if style == "blink":
             snap = 1.0 if state.stepped >= 0.5 else 0.0
             expand_x = width * 0.08 * strength * snap
-            expand_y = height * 0.18 * strength * snap
+            expand_y = height * 0.32 * strength * snap
         elif style == "pop":
             pop_amount = 0.32 + state.burst * 0.95
-            expand_x = width * 0.18 * strength * pop_amount
-            expand_y = height * 0.34 * strength * pop_amount
-            shift_y = -height * 0.05 * strength * state.burst
+            expand_x = width * 0.16 * strength * pop_amount
+            expand_y = height * 0.48 * strength * pop_amount
         elif style == "scan":
-            expand_y = height * 0.14 * strength * (0.35 + state.stepped * 0.65)
-            expand_x = width * 0.02 * strength * state.stepped
+            expand_y = height * 0.26 * strength * (0.35 + state.stepped * 0.65)
+            expand_x = width * 0.03 * strength * state.stepped
         elif style == "jitter":
-            shift_x = width * 0.06 * strength * state.jitter
-            shift_y = -height * 0.18 * strength * state.jitter
-            expand_x = width * 0.01 * strength * abs(state.jitter)
+            expand_x = width * 0.05 * strength * abs(state.jitter)
+            expand_y = height * 0.26 * strength * abs(state.jitter)
         elif style == "arcade":
             snap = 1.0 if state.stepped >= 0.5 else 0.0
-            shift_y = -height * 0.12 * strength * snap
-            expand_x = width * 0.07 * strength * state.stepped
-            expand_y = height * 0.08 * strength * state.stepped
+            expand_x = width * 0.08 * strength * state.stepped
+            expand_y = height * 0.18 * strength * (0.2 + snap * 0.8)
         elif style == "pulse":
             pulse = 0.18 + state.wave * 0.82
-            expand_x = width * 0.14 * strength * pulse
-            expand_y = height * 0.24 * strength * pulse
+            expand_x = width * 0.12 * strength * pulse
+            expand_y = height * 0.38 * strength * pulse
         elif style == "breathe":
-            stretch = 0.15 + state.wave * 0.85
-            expand_x = -width * 0.05 * strength * stretch
-            expand_y = height * 0.34 * strength * stretch
+            stretch = state.wave - 0.5
+            expand_x = width * 0.08 * strength * stretch
+            expand_y = height * 0.44 * strength * stretch
         elif style == "shimmer":
-            shift_x = width * 0.015 * strength * math.sin((state.phase * 2.0 + state.saw) * math.tau)
-            expand_x = width * 0.028 * strength
+            expand_x = width * 0.05 * strength * (0.5 + state.burst * 0.5)
+            expand_y = height * 0.12 * strength * (0.35 + state.wave * 0.65)
         elif style == "bounce":
             hop = abs(state.lift)
-            shift_y = -height * 0.48 * strength * hop
-            expand_x = width * 0.05 * strength * hop
-            expand_y = -height * 0.14 * strength * hop
+            expand_x = width * 0.08 * strength * hop
+            expand_y = height * 0.42 * strength * hop - height * 0.08 * strength * (1.0 - hop)
         elif style == "expand":
             expansion = 0.25 + state.wave * 0.95
             expand_x = width * 0.16 * strength * expansion
-            expand_y = height * 0.22 * strength * expansion
+            expand_y = height * 0.42 * strength * expansion
         elif style == "flicker":
-            expand_x = width * 0.05 * strength * state.flicker
-            expand_y = height * 0.1 * strength * state.flicker
-            shift_x = width * 0.015 * strength * math.sin((state.phase * 5.2 + state.saw) * math.tau)
+            expand_x = width * 0.06 * strength * state.flicker
+            expand_y = height * 0.24 * strength * state.flicker
         elif style == "wave":
-            expand_x = width * 0.06 * strength * state.wave
-            expand_y = height * 0.08 * strength * (0.25 + state.wave)
-            shift_x = width * 0.035 * strength * state.lift
-            shift_y = -height * 0.16 * strength * math.sin((state.phase * 1.4 + state.saw) * math.tau)
+            expand_x = width * 0.08 * strength * state.wave
+            expand_y = height * 0.3 * strength * (0.25 + state.wave)
 
-        animated_rect = _expand_rect(rect, expand_x, expand_y)
-        return _offset_rect(animated_rect, shift_x, shift_y)
+        return _expand_rect(rect, expand_x, expand_y)
 
     def _draw_glow(
         self,
-        glow_draw: ImageDraw.ImageDraw,
-        crisp_glow_draw: ImageDraw.ImageDraw,
+        glow_draw: _LayerContext,
+        crisp_glow_draw: _LayerContext,
         rect: tuple[float, float, float, float],
         radius: float,
         state: _AnimationState,
@@ -635,15 +744,17 @@ class ProjectRenderer:
 
     def _draw_animation_overlay(
         self,
-        draw: ImageDraw.ImageDraw,
-        rect: tuple[float, float, float, float],
-        radius: float,
+        draw: _LayerContext,
+        base_rect: tuple[float, float, float, float],
+        frame_rect: tuple[float, float, float, float],
+        base_radius: float,
+        frame_radius: float,
         state: _AnimationState,
     ) -> None:
         style = self.settings.animation_style
         strength = self.settings.animation_strength
-        width = rect[2] - rect[0]
-        height = rect[3] - rect[1]
+        width = base_rect[2] - base_rect[0]
+        height = base_rect[3] - base_rect[1]
         accent = self.settings.animation_accent_color
         afterimage_style = self._resolved_afterimage_style()
 
@@ -654,20 +765,26 @@ class ProjectRenderer:
             if state.stepped >= 0.5:
                 stripe_height = max(1.0, height * 0.22)
                 draw.rectangle(
-                    (rect[0] + 1.0, rect[1] + 1.0, rect[2] - 1.0, rect[1] + stripe_height),
+                    (base_rect[0] + 1.0, base_rect[1] + 1.0, base_rect[2] - 1.0, base_rect[1] + stripe_height),
                     fill=_with_alpha(self.settings.outline_color, 165),
                 )
-                frame_rect = _expand_rect(rect, height * 0.04, height * 0.06)
                 draw.rounded_rectangle(
                     frame_rect,
-                    radius=self._rect_radius(frame_rect),
+                    radius=frame_radius,
                     outline=_with_alpha(accent, 135),
                     width=max(1, int(height * 0.1)),
                 )
             return
 
         if style == "pop":
-            inner_rect = _inset_rect(rect, width * 0.12, height * 0.18)
+            inner_rect = _inset_rect(base_rect, width * 0.12, height * 0.18)
+            pop_rect = _expand_rect(frame_rect, height * 0.04 * state.burst, height * 0.08 * state.burst)
+            draw.rounded_rectangle(
+                pop_rect,
+                radius=self._rect_radius(pop_rect),
+                outline=_with_alpha(accent, int(160 * (0.25 + state.burst * 0.75))),
+                width=max(1, int(height * 0.11)),
+            )
             if afterimage_style in {"outline", "both"}:
                 draw.rounded_rectangle(
                     inner_rect,
@@ -676,13 +793,6 @@ class ProjectRenderer:
                     width=max(1, int(height * 0.08)),
                 )
             else:
-                pop_rect = _expand_rect(rect, height * 0.14 * (0.25 + state.burst), height * 0.14 * (0.25 + state.burst))
-                draw.rounded_rectangle(
-                    pop_rect,
-                    radius=self._rect_radius(pop_rect),
-                    outline=_with_alpha(accent, int(165 * (0.2 + state.burst * 0.8))),
-                    width=max(1, int(height * 0.12)),
-                )
                 draw.rounded_rectangle(
                     inner_rect,
                     radius=max(1.0, self._rect_radius(inner_rect) * 0.8),
@@ -694,30 +804,35 @@ class ProjectRenderer:
             line_height = max(1.0, height * 0.14)
             steps = 5
             step_index = min(steps - 1, int(state.phase * steps))
-            scan_y = _lerp(rect[1] + line_height, rect[3] - line_height, step_index / max(1, steps - 1))
+            scan_y = _lerp(base_rect[1] + line_height, base_rect[3] - line_height, step_index / max(1, steps - 1))
             draw.rectangle(
-                (rect[0] + 1.0, scan_y - line_height / 2.0, rect[2] - 1.0, scan_y + line_height / 2.0),
+                (base_rect[0] + 1.0, scan_y - line_height / 2.0, base_rect[2] - 1.0, scan_y + line_height / 2.0),
                 fill=_with_alpha(accent, 120),
             )
-            tail_y = max(rect[1] + line_height / 2.0, scan_y - line_height * 1.45)
+            tail_y = max(base_rect[1] + line_height / 2.0, scan_y - line_height * 1.45)
             draw.rectangle(
-                (rect[0] + width * 0.08, tail_y - line_height / 3.0, rect[2] - width * 0.08, tail_y + line_height / 3.0),
+                (
+                    base_rect[0] + width * 0.08,
+                    tail_y - line_height / 3.0,
+                    base_rect[2] - width * 0.08,
+                    tail_y + line_height / 3.0,
+                ),
                 fill=_with_alpha(self.settings.outline_color, 70),
             )
+            draw.rounded_rectangle(frame_rect, radius=frame_radius, outline=_with_alpha(accent, 100), width=max(1, int(height * 0.08)))
             return
 
         if style == "jitter":
-            ghost_rect = _offset_rect(rect, -width * 0.06 * state.jitter, height * 0.06 * state.jitter)
             draw.rounded_rectangle(
-                ghost_rect,
-                radius=self._rect_radius(ghost_rect),
+                frame_rect,
+                radius=frame_radius,
                 outline=_with_alpha(accent, 130),
                 width=max(1, int(height * 0.1)),
             )
             slice_width = max(2.0, width * 0.1)
-            slice_x = rect[0] + width * (0.15 + 0.2 * abs(state.jitter))
+            slice_x = base_rect[0] + width * (0.15 + 0.2 * abs(state.jitter))
             draw.rectangle(
-                (slice_x, rect[1] + 1.0, min(rect[2], slice_x + slice_width), rect[3] - 1.0),
+                (slice_x, base_rect[1] + 1.0, min(base_rect[2], slice_x + slice_width), base_rect[3] - 1.0),
                 fill=_with_alpha(self.settings.outline_color, 78),
             )
             return
@@ -725,15 +840,15 @@ class ProjectRenderer:
         if style == "arcade":
             frame_width = max(1, int(height * 0.12))
             draw.rectangle(
-                (rect[0], rect[1], rect[2], rect[3]),
+                frame_rect,
                 outline=_with_alpha(accent, 130),
                 width=frame_width,
             )
             pips = 3
             pip_width = max(2.0, width * 0.08)
             gap = max(2.0, width * 0.04)
-            start_x = rect[0] + width * 0.12
-            pip_y = rect[1] + height * 0.18
+            start_x = base_rect[0] + width * 0.12
+            pip_y = base_rect[1] + height * 0.18
             for index in range(pips):
                 if index <= int(state.stepped * (pips - 1) + 0.001):
                     x0 = start_x + index * (pip_width + gap)
@@ -742,69 +857,74 @@ class ProjectRenderer:
                         fill=_with_alpha(self.settings.outline_color, 150),
                     )
             corner_size = max(2.0, height * 0.16)
-            draw.rectangle((rect[0], rect[1], rect[0] + corner_size, rect[1] + corner_size), fill=_with_alpha(accent, 95))
-            draw.rectangle((rect[2] - corner_size, rect[3] - corner_size, rect[2], rect[3]), fill=_with_alpha(accent, 95))
+            draw.rectangle(
+                (base_rect[0], base_rect[1], base_rect[0] + corner_size, base_rect[1] + corner_size),
+                fill=_with_alpha(accent, 95),
+            )
+            draw.rectangle(
+                (base_rect[2] - corner_size, base_rect[3] - corner_size, base_rect[2], base_rect[3]),
+                fill=_with_alpha(accent, 95),
+            )
             return
 
         if style == "pulse":
             shine_height = height * (0.22 + 0.1 * state.wave)
-            highlight_rect = _inset_rect((rect[0], rect[1], rect[2], rect[1] + shine_height), 1.0, 1.0)
-            if afterimage_style not in {"outline", "both"}:
-                ring_rect = _expand_rect(rect, height * 0.08 * (0.2 + state.wave), height * 0.08 * (0.2 + state.wave))
-                draw.rounded_rectangle(
-                    ring_rect,
-                    radius=self._rect_radius(ring_rect),
-                    outline=_with_alpha(accent, int(145 * (0.3 + state.wave * 0.7))),
-                    width=max(1, int(height * 0.1)),
-                )
+            highlight_rect = _inset_rect((base_rect[0], base_rect[1], base_rect[2], base_rect[1] + shine_height), 1.0, 1.0)
+            draw.rounded_rectangle(
+                frame_rect,
+                radius=frame_radius,
+                outline=_with_alpha(accent, int(145 * (0.3 + state.wave * 0.7))),
+                width=max(1, int(height * 0.1)),
+            )
             draw.rounded_rectangle(
                 highlight_rect,
-                radius=max(1.0, radius * 0.6),
+                radius=max(1.0, base_radius * 0.6),
                 fill=_with_alpha(self.settings.outline_color, int(70 + 60 * state.wave)),
             )
             return
 
         if style == "breathe":
-            top_gloss = _inset_rect((rect[0], rect[1], rect[2], rect[1] + height * 0.34), 1.0, 1.0)
-            bottom_glow = _inset_rect((rect[0], rect[3] - height * 0.28, rect[2], rect[3]), width * 0.06, 1.0)
+            top_gloss = _inset_rect((base_rect[0], base_rect[1], base_rect[2], base_rect[1] + height * 0.34), 1.0, 1.0)
+            bottom_glow = _inset_rect((base_rect[0], base_rect[3] - height * 0.28, base_rect[2], base_rect[3]), width * 0.06, 1.0)
             draw.rounded_rectangle(
                 top_gloss,
-                radius=max(1.0, radius * 0.65),
+                radius=max(1.0, base_radius * 0.65),
                 fill=_with_alpha(self.settings.outline_color, int(65 + 50 * state.wave)),
             )
             draw.rounded_rectangle(
                 bottom_glow,
-                radius=max(1.0, radius * 0.5),
+                radius=max(1.0, base_radius * 0.5),
                 outline=_with_alpha(accent, int(120 * (0.25 + state.wave * 0.75))),
                 width=max(1, int(height * 0.08)),
             )
+            draw.rounded_rectangle(frame_rect, radius=frame_radius, outline=_with_alpha(accent, 82), width=max(1, int(height * 0.08)))
             return
 
         if style == "shimmer":
             bar_width = max(5.0, width * 0.22)
-            travel = _lerp(rect[0] - bar_width, rect[2] + bar_width, state.phase)
+            travel = _lerp(base_rect[0] - bar_width, base_rect[2] + bar_width, state.phase)
             shimmer = [
-                (travel - bar_width, rect[3]),
-                (travel, rect[1]),
-                (travel + bar_width, rect[1]),
-                (travel, rect[3]),
+                (travel - bar_width, base_rect[3]),
+                (travel, base_rect[1]),
+                (travel + bar_width, base_rect[1]),
+                (travel, base_rect[3]),
             ]
             draw.polygon(shimmer, fill=_with_alpha(accent, int(110 * _clamp(0.2 + strength))))
+            draw.rounded_rectangle(frame_rect, radius=frame_radius, outline=_with_alpha(accent, 92), width=max(1, int(height * 0.08)))
             return
 
         if style == "bounce":
-            trail_rect = _offset_rect(rect, 0.0, height * 0.28 * (0.35 + state.wave))
             draw.rounded_rectangle(
-                trail_rect,
-                radius=radius,
+                frame_rect,
+                radius=frame_radius,
                 outline=_with_alpha(accent, 90),
                 width=max(1, int(height * 0.12)),
             )
             shadow_rect = (
-                rect[0] + width * 0.08,
-                rect[3] + height * 0.12,
-                rect[2] - width * 0.08,
-                rect[3] + height * 0.24,
+                frame_rect[0] + width * 0.08,
+                frame_rect[3] + height * 0.08,
+                frame_rect[2] - width * 0.08,
+                frame_rect[3] + height * 0.18,
             )
             draw.rounded_rectangle(
                 shadow_rect,
@@ -814,15 +934,13 @@ class ProjectRenderer:
             return
 
         if style == "expand":
-            expansion = height * strength * (0.4 + state.wave * 0.7)
-            ring_rect = _expand_rect(rect, expansion, expansion)
             draw.rounded_rectangle(
-                ring_rect,
-                radius=radius + expansion,
+                frame_rect,
+                radius=frame_radius,
                 outline=_with_alpha(accent, int(150 * (1.0 - state.wave * 0.55))),
                 width=max(1, int(height * 0.12)),
             )
-            inner_rect = _inset_rect(rect, width * 0.08, height * 0.1)
+            inner_rect = _inset_rect(base_rect, width * 0.08, height * 0.1)
             draw.rounded_rectangle(
                 inner_rect,
                 radius=max(1.0, self._rect_radius(inner_rect) * 0.75),
@@ -835,24 +953,31 @@ class ProjectRenderer:
             alpha = int(70 + 120 * state.flicker)
             slice_height = max(2.0, height * 0.18)
             for index in range(3):
-                band_y = _lerp(rect[1] + slice_height, rect[3] - slice_height, ((state.saw + index * 0.23) % 1.0))
+                band_y = _lerp(base_rect[1] + slice_height, base_rect[3] - slice_height, ((state.saw + index * 0.23) % 1.0))
                 draw.rectangle(
-                    (rect[0] + width * 0.05, band_y - slice_height / 2.0, rect[2] - width * 0.05, band_y + slice_height / 2.0),
+                    (
+                        base_rect[0] + width * 0.05,
+                        band_y - slice_height / 2.0,
+                        base_rect[2] - width * 0.05,
+                        band_y + slice_height / 2.0,
+                    ),
                     fill=_with_alpha(accent, max(0, alpha - index * 28)),
                 )
+            draw.rounded_rectangle(frame_rect, radius=frame_radius, outline=_with_alpha(accent, 92), width=max(1, int(height * 0.08)))
             return
 
         if style == "wave":
             stripe_count = 3
             for index in range(stripe_count):
                 offset = (state.phase + index / stripe_count) % 1.0
-                stripe_y = _lerp(rect[1] + 2.0, rect[3] - 2.0, offset)
+                stripe_y = _lerp(base_rect[1] + 2.0, base_rect[3] - 2.0, offset)
                 wobble = width * 0.06 * math.sin((offset + state.phase) * math.tau)
                 draw.line(
-                    (rect[0] + 2.0 + wobble, stripe_y, rect[2] - 2.0 - wobble, stripe_y),
+                    (base_rect[0] + 2.0 + wobble, stripe_y, base_rect[2] - 2.0 - wobble, stripe_y),
                     fill=_with_alpha(accent, 95),
                     width=max(1, int(height * 0.08)),
                 )
+            draw.rounded_rectangle(frame_rect, radius=frame_radius, outline=_with_alpha(accent, 88), width=max(1, int(height * 0.08)))
 
     def _rect_radius(self, rect: tuple[float, float, float, float]) -> float:
         width = rect[2] - rect[0]
@@ -958,6 +1083,11 @@ def _offset_rect(rect: tuple[float, float, float, float], offset_x: float, offse
         rect[2] + offset_x,
         rect[3] + offset_y,
     )
+
+
+def _normalize_rect(rect: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = rect
+    return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
 
 
 def _scale_rect(rect: tuple[float, float, float, float], scale_x: float, scale_y: float) -> tuple[float, float, float, float]:

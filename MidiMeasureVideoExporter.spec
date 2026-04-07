@@ -5,20 +5,25 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 imageio_datas, imageio_binaries, imageio_hiddenimports = collect_all("imageio")
 ffmpeg_datas, ffmpeg_binaries, ffmpeg_hiddenimports = collect_all("imageio_ffmpeg")
+aggdraw_datas, aggdraw_binaries, aggdraw_hiddenimports = collect_all("aggdraw")
 
 datas = []
 datas += imageio_datas
 datas += ffmpeg_datas
+datas += aggdraw_datas
 datas += copy_metadata("imageio")
 datas += copy_metadata("imageio-ffmpeg")
+datas += copy_metadata("aggdraw")
 
 binaries = []
 binaries += imageio_binaries
 binaries += ffmpeg_binaries
+binaries += aggdraw_binaries
 
 hiddenimports = []
 hiddenimports += imageio_hiddenimports
 hiddenimports += ffmpeg_hiddenimports
+hiddenimports += aggdraw_hiddenimports
 hiddenimports += ["PIL._tkinter_finder"]
 
 
