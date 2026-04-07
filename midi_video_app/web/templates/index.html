@@ -7,22 +7,54 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 <body>
+  <div class="ambient ambient-aurora" aria-hidden="true"></div>
+  <div class="ambient ambient-grid" aria-hidden="true"></div>
+  <div class="ambient ambient-grain" aria-hidden="true"></div>
+  <div class="cursor-spotlight" aria-hidden="true"></div>
+
   <div class="page">
-    <header class="hero">
-      <div>
+    <header class="hero panel reveal">
+      <div class="hero-main">
         <p class="eyebrow">Browser Edition</p>
-        <h1>MIDI小節切り替え動画ツール</h1>
-        <p class="hero-copy">Mac とスマホでも使えるブラウザ版です。MIDI を読み込むと、1小節ごとの固定表示をつないだ動画をそのまま書き出せます。</p>
+        <h1 class="hero-title">
+          <span class="hero-title-top">MIDI Motion</span>
+          <span class="hero-title-bottom">Scene Studio</span>
+        </h1>
+        <p class="hero-copy">Mac とスマホでも使えるブラウザ版です。MIDI を読み込むと、1小節ごとの固定表示をつないだ動画をそのまま書き出せます。背景の空気感、ガラス感、光の余韻まで含めて触れるようにしました。</p>
+        <div class="hero-tags">
+          <span class="tag">Aurora Glow</span>
+          <span class="tag">Glass Panels</span>
+          <span class="tag">Motion Presets</span>
+          <span class="tag">Measure Sync</span>
+        </div>
       </div>
-      <div class="hero-note">
-        <p>スマホから使う場合</p>
-        <p>同じWi-FiにあるPCで `python web_main.py --host 0.0.0.0 --port 8000` を実行して、スマホのブラウザでそのPCのIPを開いてください。</p>
+
+      <div class="hero-side">
+        <div class="hero-note">
+          <p class="hero-note-title">スマホから開く</p>
+          <p>同じWi-FiにあるPCで <code>python web_main.py --host 0.0.0.0 --port 8000</code> を実行し、スマホのブラウザで PC の IP アドレスを開いてください。</p>
+        </div>
+
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <span>出力</span>
+            <strong>1920×1080</strong>
+          </div>
+          <div class="hero-stat">
+            <span>プレビュー</span>
+            <strong>ライブ更新</strong>
+          </div>
+          <div class="hero-stat">
+            <span>対応</span>
+            <strong>Windows / Mac / Mobile</strong>
+          </div>
+        </div>
       </div>
     </header>
 
     <main class="layout">
       <section class="preview-column">
-        <div class="panel top-panel">
+        <div class="panel top-panel reveal">
           <div class="upload-row">
             <label class="file-picker">
               <span>MIDIを選ぶ</span>
@@ -30,22 +62,33 @@
             </label>
             <button id="exportButton" class="primary" type="button">MP4を書き出す</button>
           </div>
+
           <div class="meta-row">
-            <div>
+            <div class="meta-card">
               <span class="meta-label">ファイル</span>
               <strong id="fileName">未読み込み</strong>
             </div>
-            <div>
+            <div class="meta-card">
               <span class="meta-label">状態</span>
-              <strong id="statusText">MIDIを選択してください。</strong>
+              <strong id="statusText" aria-live="polite">MIDIを選択してください。</strong>
             </div>
           </div>
         </div>
 
-        <div class="panel preview-panel">
-          <div class="preview-frame">
-            <img id="previewImage" alt="プレビュー" />
-            <div id="previewEmpty" class="preview-empty">MIDIを読み込むとここにプレビューが表示されます。</div>
+        <div class="panel preview-panel reveal">
+          <div class="preview-shell">
+            <div class="preview-header">
+              <span class="hud-label">Live Preview</span>
+              <span id="themeBadge" class="theme-badge">モノクロフラッシュ</span>
+            </div>
+
+            <div id="previewFrame" class="preview-frame">
+              <img id="previewImage" alt="プレビュー" />
+              <div class="preview-halo" aria-hidden="true"></div>
+              <div class="preview-gridline" aria-hidden="true"></div>
+              <div class="preview-scanlines" aria-hidden="true"></div>
+              <div id="previewEmpty" class="preview-empty">MIDIを読み込むとここにプレビューが表示されます。</div>
+            </div>
           </div>
 
           <div class="transport">
@@ -64,93 +107,103 @@
         </div>
       </section>
 
-      <aside class="panel settings-panel">
-        <div class="settings-header">
-          <h2>見た目設定</h2>
-          <p>テーマから始めて、細かく触りたいところだけ調整できます。</p>
-        </div>
+      <div class="settings-column">
+        <section class="panel preset-panel reveal">
+          <div class="settings-header">
+            <h2>スタイルプリセット</h2>
+            <p>最近のデザイン事例をヒントに、空気感が違う見た目をすぐ試せるようにしました。</p>
+          </div>
+          <div id="themePresetGrid" class="preset-grid"></div>
+        </section>
 
-        <div class="field-grid">
-          <label class="field">
-            <span>テーマ</span>
-            <select id="themeSelect"></select>
-          </label>
-          <label class="field">
-            <span>角の形</span>
-            <select id="cornerStyleSelect"></select>
-          </label>
-          <label class="field">
-            <span>光り方</span>
-            <select id="glowStyleSelect"></select>
-          </label>
-          <label class="field">
-            <span>アニメーション</span>
-            <select id="animationStyleSelect"></select>
-          </label>
-          <label class="field">
-            <span>残像</span>
-            <select id="afterimageStyleSelect"></select>
-          </label>
-        </div>
+        <aside class="panel settings-panel reveal">
+          <div class="settings-header">
+            <h2>見た目設定</h2>
+            <p>テーマから始めて、色、光、残像、アニメーションを細かく詰められます。</p>
+          </div>
 
-        <div class="field-grid colors">
-          <label class="field">
-            <span>背景色</span>
-            <input id="backgroundColorInput" type="color">
-          </label>
-          <label class="field">
-            <span>通常ノーツ色</span>
-            <input id="idleNoteColorInput" type="color">
-          </label>
-          <label class="field">
-            <span>発音中ノーツ色</span>
-            <input id="activeNoteColorInput" type="color">
-          </label>
-          <label class="field">
-            <span>発光色</span>
-            <input id="glowColorInput" type="color">
-          </label>
-          <label class="field">
-            <span>アニメ色</span>
-            <input id="animationAccentColorInput" type="color">
-          </label>
-          <label class="field">
-            <span>輪郭色</span>
-            <input id="outlineColorInput" type="color">
-          </label>
-        </div>
+          <div class="field-grid">
+            <label class="field">
+              <span>テーマ</span>
+              <select id="themeSelect"></select>
+            </label>
+            <label class="field">
+              <span>角の形</span>
+              <select id="cornerStyleSelect"></select>
+            </label>
+            <label class="field">
+              <span>光り方</span>
+              <select id="glowStyleSelect"></select>
+            </label>
+            <label class="field">
+              <span>アニメーション</span>
+              <select id="animationStyleSelect"></select>
+            </label>
+            <label class="field">
+              <span>残像</span>
+              <select id="afterimageStyleSelect"></select>
+            </label>
+          </div>
 
-        <div class="slider-list">
-          <label class="slider-field">
-            <span>発光の強さ</span>
-            <input id="glowStrengthInput" type="range" min="0" max="150" step="1">
-            <strong id="glowStrengthValue">0%</strong>
-          </label>
-          <label class="slider-field">
-            <span>アニメの強さ</span>
-            <input id="animationStrengthInput" type="range" min="0" max="150" step="1">
-            <strong id="animationStrengthValue">0%</strong>
-          </label>
-          <label class="slider-field">
-            <span>アニメ速度</span>
-            <input id="animationSpeedInput" type="range" min="25" max="300" step="1">
-            <strong id="animationSpeedValue">0%</strong>
-          </label>
-          <label class="slider-field">
-            <span>残像の強さ</span>
-            <input id="afterimageStrengthInput" type="range" min="0" max="150" step="1">
-            <strong id="afterimageStrengthValue">0%</strong>
-          </label>
-        </div>
+          <div class="field-grid colors">
+            <label class="field">
+              <span>背景色</span>
+              <input id="backgroundColorInput" type="color">
+            </label>
+            <label class="field">
+              <span>通常ノーツ色</span>
+              <input id="idleNoteColorInput" type="color">
+            </label>
+            <label class="field">
+              <span>発音中ノーツ色</span>
+              <input id="activeNoteColorInput" type="color">
+            </label>
+            <label class="field">
+              <span>発光色</span>
+              <input id="glowColorInput" type="color">
+            </label>
+            <label class="field">
+              <span>アニメ色</span>
+              <input id="animationAccentColorInput" type="color">
+            </label>
+            <label class="field">
+              <span>輪郭色</span>
+              <input id="outlineColorInput" type="color">
+            </label>
+          </div>
 
-        <div class="export-box">
-          <label class="field">
-            <span>FPS</span>
-            <input id="fpsInput" type="number" min="1" max="120" value="30">
-          </label>
-          <p>書き出し解像度は 1920x1080 です。スマホ用の軽い確認はプレビューで行えます。</p>
-        </div>
-      </aside>
+          <div class="slider-list">
+            <label class="slider-field">
+              <span>発光の強さ</span>
+              <input id="glowStrengthInput" type="range" min="0" max="150" step="1">
+              <strong id="glowStrengthValue">0%</strong>
+            </label>
+            <label class="slider-field">
+              <span>アニメの強さ</span>
+              <input id="animationStrengthInput" type="range" min="0" max="150" step="1">
+              <strong id="animationStrengthValue">0%</strong>
+            </label>
+            <label class="slider-field">
+              <span>アニメ速度</span>
+              <input id="animationSpeedInput" type="range" min="25" max="300" step="1">
+              <strong id="animationSpeedValue">0%</strong>
+            </label>
+            <label class="slider-field">
+              <span>残像の強さ</span>
+              <input id="afterimageStrengthInput" type="range" min="0" max="150" step="1">
+              <strong id="afterimageStrengthValue">0%</strong>
+            </label>
+          </div>
+
+          <div class="export-box">
+            <label class="field">
+              <span>FPS</span>
+              <input id="fpsInput" type="number" min="1" max="120" value="30">
+            </label>
+            <p>ブラウザ版のプレビューは軽く保ちつつ、最終書き出しは 1920x1080 のまま行います。</p>
+          </div>
+        </aside>
+      </div>
     </main>
   </div>
 

@@ -1,5 +1,18 @@
 const boot = window.APP_BOOTSTRAP;
 
+const presetDescriptions = {
+  "モノクロフラッシュ": "硬めのコントラストでタイトルカード風。",
+  "アイスブルー": "透明感と冷たい光でクリーンに。",
+  "サンセット": "柔らかい熱と余韻が残る夕景系。",
+  "エメラルド": "深い緑に軽いアーケード感を追加。",
+  "マゼンタネオン": "夜景ネオンみたいな派手さ重視。",
+  "ゴールドスパーク": "金属感とレトロゲーム感を両立。",
+  "アーケード": "黒ベースに走査線っぽい空気感。",
+  "オーロラグラス": "最近っぽいガラス感とオーロラ発光。",
+  "シネマノワール": "暗い空気に上品な縁光を足したシネマ調。",
+  "シトラスポップ": "鮮やかな差し色で軽く華やかに。",
+};
+
 const state = {
   projectId: null,
   fileName: "",
@@ -23,6 +36,7 @@ const elements = {
   statusText: document.getElementById("statusText"),
   previewImage: document.getElementById("previewImage"),
   previewEmpty: document.getElementById("previewEmpty"),
+  previewFrame: document.getElementById("previewFrame"),
   playButton: document.getElementById("playButton"),
   stopButton: document.getElementById("stopButton"),
   prevMeasureButton: document.getElementById("prevMeasureButton"),
@@ -30,6 +44,8 @@ const elements = {
   timelineRange: document.getElementById("timelineRange"),
   timeText: document.getElementById("timeText"),
   measureText: document.getElementById("measureText"),
+  themeBadge: document.getElementById("themeBadge"),
+  themePresetGrid: document.getElementById("themePresetGrid"),
   themeSelect: document.getElementById("themeSelect"),
   cornerStyleSelect: document.getElementById("cornerStyleSelect"),
   glowStyleSelect: document.getElementById("glowStyleSelect"),
@@ -80,10 +96,55 @@ function populateSelect(select, items, selectedValue) {
       option.value = item.value;
       option.textContent = item.label;
     }
-    if (option.value === selectedValue) {
-      option.selected = true;
-    }
+    option.selected = option.value === selectedValue;
     select.appendChild(option);
+  });
+}
+
+function wrapViewTransition(update) {
+  if ("startViewTransition" in document) {
+    document.startViewTransition(update);
+    return;
+  }
+  update();
+}
+
+function hexToRgbString(hex) {
+  const normalized = hex.replace("#", "");
+  const full = normalized.length === 3
+    ? normalized.split("").map((value) => value + value).join("")
+    : normalized;
+  const values = [0, 2, 4].map((index) => parseInt(full.slice(index, index + 2), 16));
+  return values.join(" ");
+}
+
+function syncThemeAtmosphere(settings) {
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty("--theme-bg-rgb", hexToRgbString(settings.background_color));
+  rootStyle.setProperty("--theme-idle-rgb", hexToRgbString(settings.idle_note_color));
+  rootStyle.setProperty("--theme-active-rgb", hexToRgbString(settings.active_note_color));
+  rootStyle.setProperty("--theme-glow-rgb", hexToRgbString(settings.glow_color));
+  rootStyle.setProperty("--theme-accent-rgb", hexToRgbString(settings.animation_accent_color));
+  rootStyle.setProperty("--theme-outline-rgb", hexToRgbString(settings.outline_color));
+}
+
+function syncSliderLabels() {
+  elements.glowStrengthValue.textContent = `${elements.glowStrengthInput.value}%`;
+  elements.animationStrengthValue.textContent = `${elements.animationStrengthInput.value}%`;
+  elements.animationSpeedValue.textContent = `${elements.animationSpeedInput.value}%`;
+  elements.afterimageStrengthValue.textContent = `${elements.afterimageStrengthInput.value}%`;
+}
+
+function updateThemeBadge() {
+  elements.themeBadge.textContent = elements.themeSelect.value || boot.defaultTheme;
+}
+
+function highlightActivePreset() {
+  const currentTheme = elements.themeSelect.value;
+  elements.themePresetGrid.querySelectorAll(".preset-card").forEach((card) => {
+    const active = card.dataset.theme === currentTheme;
+    card.classList.toggle("is-active", active);
+    card.setAttribute("aria-pressed", String(active));
   });
 }
 
@@ -96,7 +157,11 @@ function applySettings(settings) {
     }
     element.value = value;
   });
+
   syncSliderLabels();
+  syncThemeAtmosphere(settings);
+  updateThemeBadge();
+  highlightActivePreset();
 }
 
 function collectSettings() {
@@ -118,13 +183,6 @@ function collectSettings() {
   };
 }
 
-function syncSliderLabels() {
-  elements.glowStrengthValue.textContent = `${elements.glowStrengthInput.value}%`;
-  elements.animationStrengthValue.textContent = `${elements.animationStrengthInput.value}%`;
-  elements.animationSpeedValue.textContent = `${elements.animationSpeedInput.value}%`;
-  elements.afterimageStrengthValue.textContent = `${elements.afterimageStrengthInput.value}%`;
-}
-
 function setStatus(message) {
   elements.statusText.textContent = message;
 }
@@ -133,6 +191,48 @@ function markCustomTheme() {
   if (elements.themeSelect.value !== boot.customTheme) {
     elements.themeSelect.value = boot.customTheme;
   }
+  updateThemeBadge();
+  highlightActivePreset();
+}
+
+function renderPresetCards() {
+  const themeNames = Object.keys(boot.themePresets);
+  elements.themePresetGrid.innerHTML = "";
+
+  themeNames.forEach((themeName) => {
+    const settings = boot.themePresets[themeName];
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "preset-card";
+    button.dataset.theme = themeName;
+    button.setAttribute("aria-pressed", "false");
+    button.innerHTML = `
+      <div class="preset-card-header">
+        <div>
+          <span class="preset-card-title">${themeName}</span>
+          <span class="preset-card-subtitle">${presetDescriptions[themeName] || "トーンの違いをすぐ試せるプリセットです。"}</span>
+        </div>
+      </div>
+      <div class="preset-swatches">
+        <span class="preset-swatch" style="background:${settings.background_color}"></span>
+        <span class="preset-swatch" style="background:${settings.glow_color}"></span>
+        <span class="preset-swatch" style="background:${settings.animation_accent_color}"></span>
+        <span class="preset-swatch" style="background:${settings.active_note_color}"></span>
+      </div>
+    `;
+
+    button.addEventListener("click", () => {
+      wrapViewTransition(() => {
+        elements.themeSelect.value = themeName;
+        applySettings(boot.themePresets[themeName]);
+      });
+      queuePreview(true);
+    });
+
+    elements.themePresetGrid.appendChild(button);
+  });
+
+  highlightActivePreset();
 }
 
 async function uploadMidi(file) {
@@ -163,6 +263,8 @@ async function uploadMidi(file) {
   elements.timelineRange.max = String(Math.max(payload.durationSec, 0.001));
   elements.timelineRange.value = "0";
   elements.exportButton.disabled = false;
+  elements.previewFrame.dataset.loaded = "true";
+  document.body.classList.add("has-project");
   updateMeta();
   setStatus("MIDIを読み込みました。");
   queuePreview(true);
@@ -269,10 +371,10 @@ function getCurrentMeasure() {
 }
 
 function jumpMeasure(direction) {
-  if (!state.measures.length) {
+  const currentMeasure = getCurrentMeasure();
+  if (!currentMeasure) {
     return;
   }
-  const currentMeasure = getCurrentMeasure();
   const nextIndex = Math.max(0, Math.min(state.measures.length - 1, currentMeasure.index + direction));
   state.currentTime = state.measures[nextIndex].startSec;
   state.playing = false;
@@ -387,21 +489,43 @@ function formatTime(seconds) {
   return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
 
+function handleManualStyleChange() {
+  markCustomTheme();
+  syncThemeAtmosphere(collectSettings());
+  queuePreview();
+}
+
+function installPointerLighting() {
+  const rootStyle = document.documentElement.style;
+  window.addEventListener("pointermove", (event) => {
+    rootStyle.setProperty("--cursor-x", `${event.clientX}px`);
+    rootStyle.setProperty("--cursor-y", `${event.clientY}px`);
+  }, { passive: true });
+}
+
 function initialize() {
   populateSelect(elements.themeSelect, boot.choices.themes, boot.defaultTheme);
   populateSelect(elements.cornerStyleSelect, boot.choices.corners, boot.defaultSettings.corner_style);
   populateSelect(elements.glowStyleSelect, boot.choices.glows, boot.defaultSettings.glow_style);
   populateSelect(elements.animationStyleSelect, boot.choices.animations, boot.defaultSettings.animation_style);
   populateSelect(elements.afterimageStyleSelect, boot.choices.afterimages, boot.defaultSettings.afterimage_style);
+
+  renderPresetCards();
   applySettings(boot.defaultSettings);
   updateMeta();
+  installPointerLighting();
 
   elements.themeSelect.addEventListener("change", () => {
     const selectedTheme = elements.themeSelect.value;
     if (selectedTheme === boot.customTheme) {
+      updateThemeBadge();
+      highlightActivePreset();
       return;
     }
-    applySettings(boot.themePresets[selectedTheme]);
+
+    wrapViewTransition(() => {
+      applySettings(boot.themePresets[selectedTheme]);
+    });
     queuePreview(true);
   });
 
@@ -430,10 +554,7 @@ function initialize() {
     elements.animationAccentColorInput,
     elements.outlineColorInput,
   ].forEach((element) => {
-    element.addEventListener("input", () => {
-      markCustomTheme();
-      queuePreview();
-    });
+    element.addEventListener("input", handleManualStyleChange);
   });
 
   [
@@ -444,8 +565,7 @@ function initialize() {
   ].forEach((element) => {
     element.addEventListener("input", () => {
       syncSliderLabels();
-      markCustomTheme();
-      queuePreview();
+      handleManualStyleChange();
     });
   });
 
