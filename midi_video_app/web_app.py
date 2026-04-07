@@ -20,6 +20,8 @@ from .models import (
     CUSTOM_THEME_NAME,
     DEFAULT_THEME_NAME,
     GLOW_STYLE_CHOICES,
+    RELEASE_FADE_CURVE_CHOICES,
+    RELEASE_FADE_STYLE_CHOICES,
     THEME_PRESETS,
     MidiProject,
     get_render_settings_for_theme,
@@ -64,6 +66,8 @@ def index():
             "glows": _choices_to_payload(GLOW_STYLE_CHOICES),
             "animations": _choices_to_payload(ANIMATION_STYLE_CHOICES),
             "afterimages": _choices_to_payload(AFTERIMAGE_STYLE_CHOICES),
+            "releaseFadeStyles": _choices_to_payload(RELEASE_FADE_STYLE_CHOICES),
+            "releaseFadeCurves": _choices_to_payload(RELEASE_FADE_CURVE_CHOICES),
         },
     }
     return render_template("index.html", bootstrap=bootstrap)

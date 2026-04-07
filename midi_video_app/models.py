@@ -50,6 +50,18 @@ class RenderSettings:
     animation_strength: float = 0.6
     animation_speed: float = 1.0
     afterimage_strength: float = 0.55
+    note_length_scale: float = 1.0
+    note_height_scale: float = 1.0
+    horizontal_padding_ratio: float = 0.045
+    vertical_padding_ratio: float = 0.08
+    idle_outline_width: float = 0.0
+    active_outline_width: float = 1.0
+    afterimage_outline_width: float = 1.0
+    afterimage_duration_sec: float = 0.2
+    afterimage_padding_scale: float = 1.0
+    release_fade_style: str = "outline"
+    release_fade_curve: str = "smooth"
+    release_fade_duration_sec: float = 0.18
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +110,19 @@ AFTERIMAGE_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
     ("outline", "枠だけ"),
     ("fill", "塗りだけ"),
     ("both", "枠+塗り"),
+)
+
+RELEASE_FADE_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("none", "なし"),
+    ("outline", "枠だけ"),
+    ("fill", "塗りだけ"),
+    ("both", "枠+塗り"),
+)
+
+RELEASE_FADE_CURVE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("linear", "線形"),
+    ("smooth", "なめらか"),
+    ("sharp", "キレよく"),
 )
 
 DEFAULT_THEME_NAME = "モノクロフラッシュ"
@@ -322,12 +347,24 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "glow_style": {value for value, _ in GLOW_STYLE_CHOICES},
         "animation_style": {value for value, _ in ANIMATION_STYLE_CHOICES},
         "afterimage_style": {value for value, _ in AFTERIMAGE_STYLE_CHOICES},
+        "release_fade_style": {value for value, _ in RELEASE_FADE_STYLE_CHOICES},
+        "release_fade_curve": {value for value, _ in RELEASE_FADE_CURVE_CHOICES},
     }
     float_ranges = {
         "glow_strength": (0.0, 1.5),
         "animation_strength": (0.0, 1.5),
         "animation_speed": (0.25, 3.0),
         "afterimage_strength": (0.0, 1.5),
+        "note_length_scale": (0.25, 2.5),
+        "note_height_scale": (0.25, 2.5),
+        "horizontal_padding_ratio": (0.0, 0.18),
+        "vertical_padding_ratio": (0.0, 0.2),
+        "idle_outline_width": (0.0, 3.0),
+        "active_outline_width": (0.0, 3.0),
+        "afterimage_outline_width": (0.0, 3.0),
+        "afterimage_duration_sec": (0.0, 2.0),
+        "afterimage_padding_scale": (0.0, 3.0),
+        "release_fade_duration_sec": (0.0, 2.0),
     }
 
     for field_name in render_settings_to_dict(settings):

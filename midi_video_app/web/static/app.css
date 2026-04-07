@@ -549,6 +549,18 @@ button.primary {
   font-size: 1.05rem;
 }
 
+.settings-block + .settings-block {
+  margin-top: 20px;
+}
+
+.subsection-title {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(var(--theme-active-rgb) / 0.86);
+}
+
 .preset-panel {
   background:
     linear-gradient(135deg, rgb(var(--theme-glow-rgb) / 0.1), transparent 44%),

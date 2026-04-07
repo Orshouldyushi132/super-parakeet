@@ -51,20 +51,42 @@ const elements = {
   glowStyleSelect: document.getElementById("glowStyleSelect"),
   animationStyleSelect: document.getElementById("animationStyleSelect"),
   afterimageStyleSelect: document.getElementById("afterimageStyleSelect"),
+  releaseFadeStyleSelect: document.getElementById("releaseFadeStyleSelect"),
+  releaseFadeCurveSelect: document.getElementById("releaseFadeCurveSelect"),
   backgroundColorInput: document.getElementById("backgroundColorInput"),
   idleNoteColorInput: document.getElementById("idleNoteColorInput"),
   activeNoteColorInput: document.getElementById("activeNoteColorInput"),
   glowColorInput: document.getElementById("glowColorInput"),
   animationAccentColorInput: document.getElementById("animationAccentColorInput"),
   outlineColorInput: document.getElementById("outlineColorInput"),
+  noteLengthScaleInput: document.getElementById("noteLengthScaleInput"),
+  noteHeightScaleInput: document.getElementById("noteHeightScaleInput"),
+  horizontalPaddingInput: document.getElementById("horizontalPaddingInput"),
+  verticalPaddingInput: document.getElementById("verticalPaddingInput"),
   glowStrengthInput: document.getElementById("glowStrengthInput"),
   animationStrengthInput: document.getElementById("animationStrengthInput"),
   animationSpeedInput: document.getElementById("animationSpeedInput"),
   afterimageStrengthInput: document.getElementById("afterimageStrengthInput"),
+  idleOutlineWidthInput: document.getElementById("idleOutlineWidthInput"),
+  activeOutlineWidthInput: document.getElementById("activeOutlineWidthInput"),
+  afterimageOutlineWidthInput: document.getElementById("afterimageOutlineWidthInput"),
+  afterimageDurationInput: document.getElementById("afterimageDurationInput"),
+  afterimagePaddingInput: document.getElementById("afterimagePaddingInput"),
+  releaseFadeDurationInput: document.getElementById("releaseFadeDurationInput"),
+  noteLengthScaleValue: document.getElementById("noteLengthScaleValue"),
+  noteHeightScaleValue: document.getElementById("noteHeightScaleValue"),
+  horizontalPaddingValue: document.getElementById("horizontalPaddingValue"),
+  verticalPaddingValue: document.getElementById("verticalPaddingValue"),
   glowStrengthValue: document.getElementById("glowStrengthValue"),
   animationStrengthValue: document.getElementById("animationStrengthValue"),
   animationSpeedValue: document.getElementById("animationSpeedValue"),
   afterimageStrengthValue: document.getElementById("afterimageStrengthValue"),
+  idleOutlineWidthValue: document.getElementById("idleOutlineWidthValue"),
+  activeOutlineWidthValue: document.getElementById("activeOutlineWidthValue"),
+  afterimageOutlineWidthValue: document.getElementById("afterimageOutlineWidthValue"),
+  afterimageDurationValue: document.getElementById("afterimageDurationValue"),
+  afterimagePaddingValue: document.getElementById("afterimagePaddingValue"),
+  releaseFadeDurationValue: document.getElementById("releaseFadeDurationValue"),
   fpsInput: document.getElementById("fpsInput"),
 };
 
@@ -79,11 +101,40 @@ const settingBindings = {
   glow_style: elements.glowStyleSelect,
   animation_style: elements.animationStyleSelect,
   afterimage_style: elements.afterimageStyleSelect,
+  release_fade_style: elements.releaseFadeStyleSelect,
+  release_fade_curve: elements.releaseFadeCurveSelect,
   glow_strength: elements.glowStrengthInput,
   animation_strength: elements.animationStrengthInput,
   animation_speed: elements.animationSpeedInput,
   afterimage_strength: elements.afterimageStrengthInput,
+  note_length_scale: elements.noteLengthScaleInput,
+  note_height_scale: elements.noteHeightScaleInput,
+  horizontal_padding_ratio: elements.horizontalPaddingInput,
+  vertical_padding_ratio: elements.verticalPaddingInput,
+  idle_outline_width: elements.idleOutlineWidthInput,
+  active_outline_width: elements.activeOutlineWidthInput,
+  afterimage_outline_width: elements.afterimageOutlineWidthInput,
+  afterimage_duration_sec: elements.afterimageDurationInput,
+  afterimage_padding_scale: elements.afterimagePaddingInput,
+  release_fade_duration_sec: elements.releaseFadeDurationInput,
 };
+
+const scaledSettingFields = new Set([
+  "glow_strength",
+  "animation_strength",
+  "animation_speed",
+  "afterimage_strength",
+  "note_length_scale",
+  "note_height_scale",
+  "horizontal_padding_ratio",
+  "vertical_padding_ratio",
+  "idle_outline_width",
+  "active_outline_width",
+  "afterimage_outline_width",
+  "afterimage_duration_sec",
+  "afterimage_padding_scale",
+  "release_fade_duration_sec",
+]);
 
 function populateSelect(select, items, selectedValue) {
   select.innerHTML = "";
@@ -129,10 +180,20 @@ function syncThemeAtmosphere(settings) {
 }
 
 function syncSliderLabels() {
+  elements.noteLengthScaleValue.textContent = `${elements.noteLengthScaleInput.value}%`;
+  elements.noteHeightScaleValue.textContent = `${elements.noteHeightScaleInput.value}%`;
+  elements.horizontalPaddingValue.textContent = `${elements.horizontalPaddingInput.value}%`;
+  elements.verticalPaddingValue.textContent = `${elements.verticalPaddingInput.value}%`;
   elements.glowStrengthValue.textContent = `${elements.glowStrengthInput.value}%`;
   elements.animationStrengthValue.textContent = `${elements.animationStrengthInput.value}%`;
   elements.animationSpeedValue.textContent = `${elements.animationSpeedInput.value}%`;
   elements.afterimageStrengthValue.textContent = `${elements.afterimageStrengthInput.value}%`;
+  elements.idleOutlineWidthValue.textContent = `${(Number(elements.idleOutlineWidthInput.value) / 100).toFixed(2)}x`;
+  elements.activeOutlineWidthValue.textContent = `${(Number(elements.activeOutlineWidthInput.value) / 100).toFixed(2)}x`;
+  elements.afterimageOutlineWidthValue.textContent = `${(Number(elements.afterimageOutlineWidthInput.value) / 100).toFixed(2)}x`;
+  elements.afterimageDurationValue.textContent = `${(Number(elements.afterimageDurationInput.value) / 100).toFixed(2)}秒`;
+  elements.afterimagePaddingValue.textContent = `${(Number(elements.afterimagePaddingInput.value) / 100).toFixed(2)}x`;
+  elements.releaseFadeDurationValue.textContent = `${(Number(elements.releaseFadeDurationInput.value) / 100).toFixed(2)}秒`;
 }
 
 function updateThemeBadge() {
@@ -151,7 +212,7 @@ function highlightActivePreset() {
 function applySettings(settings) {
   Object.entries(settingBindings).forEach(([fieldName, element]) => {
     const value = settings[fieldName];
-    if (fieldName.endsWith("_strength") || fieldName === "animation_speed") {
+    if (scaledSettingFields.has(fieldName)) {
       element.value = Math.round(Number(value) * 100);
       return;
     }
@@ -165,22 +226,14 @@ function applySettings(settings) {
 }
 
 function collectSettings() {
-  return {
-    background_color: elements.backgroundColorInput.value,
-    idle_note_color: elements.idleNoteColorInput.value,
-    active_note_color: elements.activeNoteColorInput.value,
-    glow_color: elements.glowColorInput.value,
-    animation_accent_color: elements.animationAccentColorInput.value,
-    outline_color: elements.outlineColorInput.value,
-    corner_style: elements.cornerStyleSelect.value,
-    glow_style: elements.glowStyleSelect.value,
-    animation_style: elements.animationStyleSelect.value,
-    afterimage_style: elements.afterimageStyleSelect.value,
-    glow_strength: Number(elements.glowStrengthInput.value) / 100,
-    animation_strength: Number(elements.animationStrengthInput.value) / 100,
-    animation_speed: Number(elements.animationSpeedInput.value) / 100,
-    afterimage_strength: Number(elements.afterimageStrengthInput.value) / 100,
-  };
+  return Object.fromEntries(
+    Object.entries(settingBindings).map(([fieldName, element]) => {
+      if (scaledSettingFields.has(fieldName)) {
+        return [fieldName, Number(element.value) / 100];
+      }
+      return [fieldName, element.value];
+    }),
+  );
 }
 
 function setStatus(message) {
@@ -509,6 +562,8 @@ function initialize() {
   populateSelect(elements.glowStyleSelect, boot.choices.glows, boot.defaultSettings.glow_style);
   populateSelect(elements.animationStyleSelect, boot.choices.animations, boot.defaultSettings.animation_style);
   populateSelect(elements.afterimageStyleSelect, boot.choices.afterimages, boot.defaultSettings.afterimage_style);
+  populateSelect(elements.releaseFadeStyleSelect, boot.choices.releaseFadeStyles, boot.defaultSettings.release_fade_style);
+  populateSelect(elements.releaseFadeCurveSelect, boot.choices.releaseFadeCurves, boot.defaultSettings.release_fade_curve);
 
   renderPresetCards();
   applySettings(boot.defaultSettings);
@@ -547,6 +602,8 @@ function initialize() {
     elements.glowStyleSelect,
     elements.animationStyleSelect,
     elements.afterimageStyleSelect,
+    elements.releaseFadeStyleSelect,
+    elements.releaseFadeCurveSelect,
     elements.backgroundColorInput,
     elements.idleNoteColorInput,
     elements.activeNoteColorInput,
@@ -558,10 +615,20 @@ function initialize() {
   });
 
   [
+    elements.noteLengthScaleInput,
+    elements.noteHeightScaleInput,
+    elements.horizontalPaddingInput,
+    elements.verticalPaddingInput,
     elements.glowStrengthInput,
     elements.animationStrengthInput,
     elements.animationSpeedInput,
     elements.afterimageStrengthInput,
+    elements.idleOutlineWidthInput,
+    elements.activeOutlineWidthInput,
+    elements.afterimageOutlineWidthInput,
+    elements.afterimageDurationInput,
+    elements.afterimagePaddingInput,
+    elements.releaseFadeDurationInput,
   ].forEach((element) => {
     element.addEventListener("input", () => {
       syncSliderLabels();

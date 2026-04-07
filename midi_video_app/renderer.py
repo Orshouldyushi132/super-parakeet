@@ -46,6 +46,13 @@ class _TrailRenderItem:
     state: _AnimationState | None = None
 
 
+@dataclass(slots=True)
+class _ReleaseRenderItem:
+    rect: tuple[float, float, float, float]
+    age_ratio: float
+    state: _AnimationState
+
+
 class ProjectRenderer:
     def __init__(self, project: MidiProject, settings: RenderSettings | None = None) -> None:
         self.project = project
@@ -79,10 +86,12 @@ class ProjectRenderer:
         crisp_glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         crisp_glow_draw = ImageDraw.Draw(crisp_glow_layer, "RGBA")
 
-        left_padding = width * 0.045
-        right_padding = width * 0.045
-        top_padding = height * 0.08
-        bottom_padding = height * 0.08
+        horizontal_padding = width * self.settings.horizontal_padding_ratio
+        vertical_padding = height * self.settings.vertical_padding_ratio
+        left_padding = horizontal_padding
+        right_padding = horizontal_padding
+        top_padding = vertical_padding
+        bottom_padding = vertical_padding
 
         plot_width = max(1.0, width - left_padding - right_padding)
         plot_height = max(1.0, height - top_padding - bottom_padding)
@@ -94,8 +103,15 @@ class ProjectRenderer:
 
         active_items: list[_ActiveRenderItem] = []
         trail_items: list[_TrailRenderItem] = []
+        release_items: list[_ReleaseRenderItem] = []
         trail_window_sec = self._afterimage_window_sec()
-        afterimage_enabled = self._resolved_afterimage_style() != "none"
+        afterimage_enabled = (
+            self._resolved_afterimage_style() != "none"
+            and trail_window_sec > 0.0
+            and self.settings.afterimage_strength > 0.0
+        )
+        release_window_sec = self._release_fade_window_sec()
+        release_enabled = self.settings.release_fade_style != "none" and release_window_sec > 0.0
 
         for segment in note_segments:
             x0 = left_padding + plot_width * segment.start_ratio
@@ -107,7 +123,7 @@ class ProjectRenderer:
             lane_top = top_padding + pitch_index * lane_height
             y0 = lane_top + (lane_height - rectangle_height) / 2.0
             y1 = y0 + rectangle_height
-            rect = (x0, y0, x1, y1)
+            rect = self._scaled_note_rect((x0, y0, x1, y1), min_rectangle_width)
 
             if segment.note_start_sec <= clamped_time < segment.note_end_sec:
                 state = self._build_animation_state(segment, clamped_time)
@@ -119,8 +135,20 @@ class ProjectRenderer:
                 self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, radius, state)
             else:
                 self._draw_idle_segment(draw, rect)
+                note_age_sec = clamped_time - segment.note_end_sec
+                if release_enabled and 0.0 <= note_age_sec <= release_window_sec:
+                    release_state = self._build_animation_state(
+                        segment,
+                        max(segment.note_start_sec, segment.note_end_sec - 1e-4),
+                    )
+                    release_items.append(
+                        _ReleaseRenderItem(
+                            rect=self._animated_rect(rect, release_state),
+                            age_ratio=_clamp(note_age_sec / max(release_window_sec, 1e-6)),
+                            state=release_state,
+                        )
+                    )
                 if afterimage_enabled:
-                    note_age_sec = clamped_time - segment.note_end_sec
                     if 0.0 <= note_age_sec <= trail_window_sec:
                         trail_items.append(
                             _TrailRenderItem(
@@ -139,6 +167,8 @@ class ProjectRenderer:
         for item in trail_items:
             if item.is_active:
                 self._draw_afterimage(draw, item)
+        for item in sorted(release_items, key=lambda release: release.age_ratio, reverse=True):
+            self._draw_release_fade(draw, item)
 
         for item in active_items:
             self._draw_active_segment(draw, item.rect, item.radius, item.state)
@@ -148,6 +178,14 @@ class ProjectRenderer:
     def _draw_idle_segment(self, draw: ImageDraw.ImageDraw, rect: tuple[float, float, float, float]) -> None:
         radius = self._rect_radius(rect)
         draw.rounded_rectangle(rect, radius=radius, fill=_with_alpha(self.settings.idle_note_color, 255))
+        outline_width = self._outline_width(rect, 0.08, self.settings.idle_outline_width)
+        if outline_width > 0:
+            draw.rounded_rectangle(
+                rect,
+                radius=radius,
+                outline=_with_alpha(self.settings.outline_color, 118),
+                width=outline_width,
+            )
 
     def _draw_active_segment(
         self,
@@ -160,15 +198,44 @@ class ProjectRenderer:
         draw.rounded_rectangle(rect, radius=radius, fill=fill_color)
 
         outline_alpha = 225 if self.settings.glow_style in {"neon", "outline", "prism"} else 175
-        outline_width = max(1, int((rect[3] - rect[1]) * 0.12))
-        draw.rounded_rectangle(
-            rect,
-            radius=radius,
-            outline=_with_alpha(self.settings.outline_color, outline_alpha),
-            width=outline_width,
-        )
+        outline_width = self._outline_width(rect, 0.12, self.settings.active_outline_width)
+        if outline_width > 0:
+            draw.rounded_rectangle(
+                rect,
+                radius=radius,
+                outline=_with_alpha(self.settings.outline_color, outline_alpha),
+                width=outline_width,
+            )
 
         self._draw_animation_overlay(draw, rect, radius, state)
+
+    def _draw_release_fade(self, draw: ImageDraw.ImageDraw, item: _ReleaseRenderItem) -> None:
+        style = self.settings.release_fade_style
+        visibility = self._release_fade_visibility(item.age_ratio)
+        if style == "none" or visibility <= 0.01:
+            return
+
+        rect = item.rect
+        radius = self._rect_radius(rect)
+        fill_color = self._active_fill_color(item.state)
+
+        if style in {"fill", "both"}:
+            draw.rounded_rectangle(
+                rect,
+                radius=radius,
+                fill=(fill_color[0], fill_color[1], fill_color[2], int(190 * visibility)),
+            )
+
+        if style in {"outline", "both"}:
+            outline_width = self._outline_width(rect, 0.12, self.settings.active_outline_width)
+            if outline_width > 0:
+                outline_alpha = 205 if self.settings.glow_style in {"neon", "outline", "prism"} else 155
+                draw.rounded_rectangle(
+                    rect,
+                    radius=radius,
+                    outline=_with_alpha(self.settings.outline_color, int(outline_alpha * visibility)),
+                    width=outline_width,
+                )
 
     def _draw_afterimage(self, draw: ImageDraw.ImageDraw, item: _TrailRenderItem) -> None:
         style = self._resolved_afterimage_style()
@@ -199,12 +266,16 @@ class ProjectRenderer:
             fill_tuple = _mix_colors(self.settings.active_note_color, self.settings.idle_note_color, 0.78)
             fill_color = (fill_tuple[0], fill_tuple[1], fill_tuple[2], int(28 * visibility))
 
-        frame_width = max(1, int((outer_rect[3] - outer_rect[1]) * (0.08 if item.is_active else 0.065)))
+        frame_width = self._outline_width(
+            outer_rect,
+            0.08 if item.is_active else 0.065,
+            self.settings.afterimage_outline_width,
+        )
 
         if style in {"fill", "both"}:
             draw.rounded_rectangle(outer_rect, radius=outer_radius, fill=fill_color)
 
-        if style in {"outline", "both"}:
+        if style in {"outline", "both"} and frame_width > 0:
             halo_rect = _expand_rect(outer_rect, 1.5, 1.5)
             draw.rounded_rectangle(
                 halo_rect,
@@ -234,9 +305,10 @@ class ProjectRenderer:
         return "outline"
 
     def _afterimage_window_sec(self) -> float:
-        speed = max(0.75, self.settings.animation_speed)
-        strength = _clamp(self.settings.afterimage_strength, 0.0, 1.5)
-        return max(0.06, min(0.36, (0.06 + 0.24 * strength) / speed))
+        return max(0.0, self.settings.afterimage_duration_sec)
+
+    def _release_fade_window_sec(self) -> float:
+        return max(0.0, self.settings.release_fade_duration_sec)
 
     def _afterimage_frame_rect(
         self,
@@ -254,7 +326,20 @@ class ProjectRenderer:
             horizontal_pad += height * 0.1
             vertical_pad += height * 0.05
 
+        padding_scale = max(0.0, self.settings.afterimage_padding_scale)
+        horizontal_pad *= padding_scale
+        vertical_pad *= padding_scale
         return _expand_rect(rect, horizontal_pad, vertical_pad)
+
+    def _release_fade_visibility(self, age_ratio: float) -> float:
+        progress = _clamp(age_ratio)
+        curve = self.settings.release_fade_curve
+        if curve == "linear":
+            return 1.0 - progress
+        if curve == "sharp":
+            return (1.0 - progress) ** 2.15
+        eased = progress * progress * (3.0 - 2.0 * progress)
+        return 1.0 - eased
 
     def _build_animation_state(self, segment: _VisibleSegment, time_sec: float) -> _AnimationState:
         duration = max(segment.note_end_sec - segment.note_start_sec, 1e-6)
@@ -779,6 +864,33 @@ class ProjectRenderer:
             return max(1.0, min(height, width) * 0.49)
         return max(1.0, min(height, width) * 0.24)
 
+    def _scaled_note_rect(
+        self,
+        rect: tuple[float, float, float, float],
+        min_width: float,
+    ) -> tuple[float, float, float, float]:
+        scaled = _scale_rect(
+            rect,
+            max(0.25, self.settings.note_length_scale),
+            max(0.25, self.settings.note_height_scale),
+        )
+        width = scaled[2] - scaled[0]
+        if width >= min_width:
+            return scaled
+
+        center_x = (scaled[0] + scaled[2]) / 2.0
+        return (center_x - min_width / 2.0, scaled[1], center_x + min_width / 2.0, scaled[3])
+
+    def _outline_width(
+        self,
+        rect: tuple[float, float, float, float],
+        base_ratio: float,
+        scale: float,
+    ) -> int:
+        if scale <= 0.0:
+            return 0
+        return max(1, int((rect[3] - rect[1]) * base_ratio * scale))
+
     def _build_measure_segments(self, project: MidiProject) -> list[list[_VisibleSegment]]:
         segments_by_measure: list[list[_VisibleSegment]] = [[] for _ in project.measures]
         measure_starts = [measure.start_beat for measure in project.measures]
@@ -846,6 +958,12 @@ def _offset_rect(rect: tuple[float, float, float, float], offset_x: float, offse
         rect[2] + offset_x,
         rect[3] + offset_y,
     )
+
+
+def _scale_rect(rect: tuple[float, float, float, float], scale_x: float, scale_y: float) -> tuple[float, float, float, float]:
+    width = rect[2] - rect[0]
+    height = rect[3] - rect[1]
+    return _expand_rect(rect, width * (scale_x - 1.0) / 2.0, height * (scale_y - 1.0) / 2.0)
 
 
 def _inset_rect(rect: tuple[float, float, float, float], inset_x: float, inset_y: float) -> tuple[float, float, float, float]:

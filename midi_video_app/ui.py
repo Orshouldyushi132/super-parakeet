@@ -17,6 +17,8 @@ from .models import (
     CUSTOM_THEME_NAME,
     DEFAULT_THEME_NAME,
     GLOW_STYLE_CHOICES,
+    RELEASE_FADE_CURVE_CHOICES,
+    RELEASE_FADE_STYLE_CHOICES,
     THEME_PRESETS,
     MidiProject,
     clone_render_settings,
@@ -36,8 +38,8 @@ class MidiVideoApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("MIDI動画書き出しツール")
-        self.root.geometry("1360x880")
-        self.root.minsize(1180, 760)
+        self.root.geometry("1480x920")
+        self.root.minsize(1240, 800)
 
         self.project: MidiProject | None = None
         self.render_settings = get_render_settings_for_theme(DEFAULT_THEME_NAME)
@@ -59,6 +61,10 @@ class MidiVideoApp:
         self._afterimage_label_to_value = {label: value for value, label in AFTERIMAGE_STYLE_CHOICES}
         self._corner_value_to_label = {value: label for value, label in CORNER_STYLE_CHOICES}
         self._corner_label_to_value = {label: value for value, label in CORNER_STYLE_CHOICES}
+        self._release_fade_value_to_label = {value: label for value, label in RELEASE_FADE_STYLE_CHOICES}
+        self._release_fade_label_to_value = {label: value for value, label in RELEASE_FADE_STYLE_CHOICES}
+        self._release_curve_value_to_label = {value: label for value, label in RELEASE_FADE_CURVE_CHOICES}
+        self._release_curve_label_to_value = {label: value for value, label in RELEASE_FADE_CURVE_CHOICES}
         self._theme_names = [preset.name for preset in THEME_PRESETS] + [CUSTOM_THEME_NAME]
 
         self.file_label_var = tk.StringVar(value="MIDIファイルが読み込まれていません")
@@ -72,14 +78,40 @@ class MidiVideoApp:
         self.glow_style_var = tk.StringVar(value=self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var = tk.StringVar(value=self._animation_value_to_label[self.render_settings.animation_style])
         self.afterimage_style_var = tk.StringVar(value=self._afterimage_value_to_label[self.render_settings.afterimage_style])
+        self.release_fade_style_var = tk.StringVar(
+            value=self._release_fade_value_to_label[self.render_settings.release_fade_style]
+        )
+        self.release_fade_curve_var = tk.StringVar(
+            value=self._release_curve_value_to_label[self.render_settings.release_fade_curve]
+        )
         self.glow_strength_var = tk.DoubleVar(value=self.render_settings.glow_strength * 100.0)
         self.animation_strength_var = tk.DoubleVar(value=self.render_settings.animation_strength * 100.0)
         self.animation_speed_var = tk.DoubleVar(value=self.render_settings.animation_speed * 100.0)
         self.afterimage_strength_var = tk.DoubleVar(value=self.render_settings.afterimage_strength * 100.0)
+        self.note_length_scale_var = tk.DoubleVar(value=self.render_settings.note_length_scale * 100.0)
+        self.note_height_scale_var = tk.DoubleVar(value=self.render_settings.note_height_scale * 100.0)
+        self.horizontal_padding_var = tk.DoubleVar(value=self.render_settings.horizontal_padding_ratio * 100.0)
+        self.vertical_padding_var = tk.DoubleVar(value=self.render_settings.vertical_padding_ratio * 100.0)
+        self.idle_outline_width_var = tk.DoubleVar(value=self.render_settings.idle_outline_width * 100.0)
+        self.active_outline_width_var = tk.DoubleVar(value=self.render_settings.active_outline_width * 100.0)
+        self.afterimage_outline_width_var = tk.DoubleVar(value=self.render_settings.afterimage_outline_width * 100.0)
+        self.afterimage_duration_var = tk.DoubleVar(value=self.render_settings.afterimage_duration_sec * 100.0)
+        self.afterimage_padding_var = tk.DoubleVar(value=self.render_settings.afterimage_padding_scale * 100.0)
+        self.release_fade_duration_var = tk.DoubleVar(value=self.render_settings.release_fade_duration_sec * 100.0)
         self.glow_strength_text_var = tk.StringVar()
         self.animation_strength_text_var = tk.StringVar()
         self.animation_speed_text_var = tk.StringVar()
         self.afterimage_strength_text_var = tk.StringVar()
+        self.note_length_scale_text_var = tk.StringVar()
+        self.note_height_scale_text_var = tk.StringVar()
+        self.horizontal_padding_text_var = tk.StringVar()
+        self.vertical_padding_text_var = tk.StringVar()
+        self.idle_outline_width_text_var = tk.StringVar()
+        self.active_outline_width_text_var = tk.StringVar()
+        self.afterimage_outline_width_text_var = tk.StringVar()
+        self.afterimage_duration_text_var = tk.StringVar()
+        self.afterimage_padding_text_var = tk.StringVar()
+        self.release_fade_duration_text_var = tk.StringVar()
 
         self._color_labels = {
             "background_color": "背景色",
@@ -129,7 +161,7 @@ class MidiVideoApp:
         self.preview_label.pack(fill="both", expand=True)
 
         settings_panel = ttk.LabelFrame(content, text="見た目設定", padding=12)
-        settings_panel.pack(side="right", fill="y", padx=(16, 0))
+        settings_panel.pack(side="right", fill="both", padx=(16, 0))
         settings_panel.columnconfigure(3, weight=1)
 
         self._build_settings_panel(settings_panel)
@@ -151,18 +183,41 @@ class MidiVideoApp:
         self.progress.pack(fill="x", pady=(12, 0))
 
     def _build_settings_panel(self, panel: ttk.LabelFrame) -> None:
-        row = 0
         ttk.Label(
             panel,
-            text="テーマを選ぶか、色とエフェクトを個別に変更してください。",
-            wraplength=300,
+            text="テーマを土台にしつつ、ノーツ寸法・残像時間・切り替えフェードまで細かく詰められます。",
+            wraplength=360,
             justify="left",
-        ).grid(row=row, column=0, columnspan=4, sticky="w")
+        ).grid(row=0, column=0, columnspan=4, sticky="w")
 
-        row += 1
-        ttk.Label(panel, text="テーマ").grid(row=row, column=0, sticky="w", pady=(12, 0))
+        notebook = ttk.Notebook(panel)
+        notebook.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(12, 0))
+        panel.rowconfigure(1, weight=1)
+        panel.columnconfigure(0, weight=1)
+
+        basic_tab = ttk.Frame(notebook, padding=12)
+        color_tab = ttk.Frame(notebook, padding=12)
+        effect_tab = ttk.Frame(notebook, padding=12)
+        detail_tab = ttk.Frame(notebook, padding=12)
+
+        notebook.add(basic_tab, text="基本")
+        notebook.add(color_tab, text="色")
+        notebook.add(effect_tab, text="演出")
+        notebook.add(detail_tab, text="詳細")
+
+        self._build_basic_settings_tab(basic_tab)
+        self._build_color_settings_tab(color_tab)
+        self._build_effect_settings_tab(effect_tab)
+        self._build_detail_settings_tab(detail_tab)
+
+    def _build_basic_settings_tab(self, panel: ttk.Frame) -> None:
+        row = 0
+        panel.columnconfigure(1, weight=1)
+        panel.columnconfigure(2, weight=1)
+
+        ttk.Label(panel, text="テーマ").grid(row=row, column=0, sticky="w")
         self.theme_combo = ttk.Combobox(panel, state="readonly", values=self._theme_names, textvariable=self.theme_var, width=18)
-        self.theme_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(12, 0))
+        self.theme_combo.grid(row=row, column=1, columnspan=3, sticky="ew")
         self.theme_combo.bind("<<ComboboxSelected>>", self._on_theme_selected)
 
         row += 1
@@ -181,8 +236,58 @@ class MidiVideoApp:
         ttk.Separator(panel).grid(row=row, column=0, columnspan=4, sticky="ew", pady=12)
 
         row += 1
-        ttk.Label(panel, text="色の設定").grid(row=row, column=0, columnspan=4, sticky="w")
+        ttk.Label(panel, text="ノーツのサイズと余白").grid(row=row, column=0, columnspan=4, sticky="w")
 
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "ノーツの長さ",
+            self.note_length_scale_var,
+            self.note_length_scale_text_var,
+            25,
+            250,
+            self._on_strength_changed,
+        )
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "ノーツの高さ",
+            self.note_height_scale_var,
+            self.note_height_scale_text_var,
+            25,
+            250,
+            self._on_strength_changed,
+        )
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "左右の余白",
+            self.horizontal_padding_var,
+            self.horizontal_padding_text_var,
+            0,
+            18,
+            self._on_strength_changed,
+        )
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "上下の余白",
+            self.vertical_padding_var,
+            self.vertical_padding_text_var,
+            0,
+            20,
+            self._on_strength_changed,
+        )
+
+    def _build_color_settings_tab(self, panel: ttk.Frame) -> None:
+        row = 0
+        panel.columnconfigure(1, weight=0)
+        panel.columnconfigure(2, weight=0)
+        panel.columnconfigure(3, weight=1)
         for field_name in (
             "background_color",
             "idle_note_color",
@@ -191,13 +296,14 @@ class MidiVideoApp:
             "animation_accent_color",
             "outline_color",
         ):
-            row += 1
             self._add_color_control(panel, row, field_name)
+            row += 1
 
-        row += 1
-        ttk.Separator(panel).grid(row=row, column=0, columnspan=4, sticky="ew", pady=12)
+    def _build_effect_settings_tab(self, panel: ttk.Frame) -> None:
+        row = 0
+        panel.columnconfigure(1, weight=1)
+        panel.columnconfigure(2, weight=1)
 
-        row += 1
         ttk.Label(panel, text="光り方").grid(row=row, column=0, sticky="w")
         self.glow_combo = ttk.Combobox(
             panel,
@@ -234,52 +340,78 @@ class MidiVideoApp:
         self.afterimage_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
 
         row += 1
-        self._add_slider_control(
+        ttk.Label(panel, text="切り替えフェード").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.release_fade_style_combo = ttk.Combobox(
             panel,
-            row,
-            "発光の強さ",
-            self.glow_strength_var,
-            self.glow_strength_text_var,
-            0,
-            150,
-            self._on_strength_changed,
+            state="readonly",
+            values=[label for _, label in RELEASE_FADE_STYLE_CHOICES],
+            textvariable=self.release_fade_style_var,
+            width=16,
         )
+        self.release_fade_style_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.release_fade_style_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
 
         row += 1
-        self._add_slider_control(
+        ttk.Label(panel, text="フェードカーブ").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.release_fade_curve_combo = ttk.Combobox(
             panel,
-            row,
-            "アニメの強さ",
-            self.animation_strength_var,
-            self.animation_strength_text_var,
-            0,
-            150,
-            self._on_strength_changed,
+            state="readonly",
+            values=[label for _, label in RELEASE_FADE_CURVE_CHOICES],
+            textvariable=self.release_fade_curve_var,
+            width=16,
         )
+        self.release_fade_curve_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.release_fade_curve_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
 
-        row += 1
-        self._add_slider_control(
-            panel,
-            row,
-            "アニメ速度",
-            self.animation_speed_var,
-            self.animation_speed_text_var,
-            25,
-            300,
-            self._on_strength_changed,
-        )
+        for label, variable, text_variable, minimum, maximum in (
+            ("発光の強さ", self.glow_strength_var, self.glow_strength_text_var, 0, 150),
+            ("アニメの強さ", self.animation_strength_var, self.animation_strength_text_var, 0, 150),
+            ("アニメ速度", self.animation_speed_var, self.animation_speed_text_var, 25, 300),
+            ("残像の強さ", self.afterimage_strength_var, self.afterimage_strength_text_var, 0, 150),
+            ("残像の時間", self.afterimage_duration_var, self.afterimage_duration_text_var, 0, 200),
+            ("フェードの時間", self.release_fade_duration_var, self.release_fade_duration_text_var, 0, 200),
+        ):
+            row += 1
+            self._add_slider_control(
+                panel,
+                row,
+                label,
+                variable,
+                text_variable,
+                minimum,
+                maximum,
+                self._on_strength_changed,
+            )
 
-        row += 1
-        self._add_slider_control(
+    def _build_detail_settings_tab(self, panel: ttk.Frame) -> None:
+        row = 0
+        panel.columnconfigure(1, weight=1)
+        panel.columnconfigure(2, weight=1)
+
+        ttk.Label(
             panel,
-            row,
-            "残像の強さ",
-            self.afterimage_strength_var,
-            self.afterimage_strength_text_var,
-            0,
-            150,
-            self._on_strength_changed,
-        )
+            text="線幅や残像フレームの広がりを調整したいときに使います。",
+            wraplength=320,
+            justify="left",
+        ).grid(row=row, column=0, columnspan=4, sticky="w")
+
+        for label, variable, text_variable, minimum, maximum in (
+            ("通常ノーツ枠", self.idle_outline_width_var, self.idle_outline_width_text_var, 0, 300),
+            ("発音中ノーツ枠", self.active_outline_width_var, self.active_outline_width_text_var, 0, 300),
+            ("残像の枠幅", self.afterimage_outline_width_var, self.afterimage_outline_width_text_var, 0, 300),
+            ("残像フレームの広さ", self.afterimage_padding_var, self.afterimage_padding_text_var, 0, 300),
+        ):
+            row += 1
+            self._add_slider_control(
+                panel,
+                row,
+                label,
+                variable,
+                text_variable,
+                minimum,
+                maximum,
+                self._on_strength_changed,
+            )
 
         row += 1
         ttk.Button(panel, text="標準テーマに戻す", command=self._reset_to_default_theme).grid(
@@ -510,6 +642,8 @@ class MidiVideoApp:
         self.render_settings.glow_style = self._glow_label_to_value[self.glow_style_var.get()]
         self.render_settings.animation_style = self._animation_label_to_value[self.animation_style_var.get()]
         self.render_settings.afterimage_style = self._afterimage_label_to_value[self.afterimage_style_var.get()]
+        self.render_settings.release_fade_style = self._release_fade_label_to_value[self.release_fade_style_var.get()]
+        self.render_settings.release_fade_curve = self._release_curve_label_to_value[self.release_fade_curve_var.get()]
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
@@ -523,6 +657,16 @@ class MidiVideoApp:
         self.render_settings.animation_strength = round(self.animation_strength_var.get() / 100.0, 3)
         self.render_settings.animation_speed = round(self.animation_speed_var.get() / 100.0, 3)
         self.render_settings.afterimage_strength = round(self.afterimage_strength_var.get() / 100.0, 3)
+        self.render_settings.note_length_scale = round(self.note_length_scale_var.get() / 100.0, 3)
+        self.render_settings.note_height_scale = round(self.note_height_scale_var.get() / 100.0, 3)
+        self.render_settings.horizontal_padding_ratio = round(self.horizontal_padding_var.get() / 100.0, 3)
+        self.render_settings.vertical_padding_ratio = round(self.vertical_padding_var.get() / 100.0, 3)
+        self.render_settings.idle_outline_width = round(self.idle_outline_width_var.get() / 100.0, 3)
+        self.render_settings.active_outline_width = round(self.active_outline_width_var.get() / 100.0, 3)
+        self.render_settings.afterimage_outline_width = round(self.afterimage_outline_width_var.get() / 100.0, 3)
+        self.render_settings.afterimage_duration_sec = round(self.afterimage_duration_var.get() / 100.0, 3)
+        self.render_settings.afterimage_padding_scale = round(self.afterimage_padding_var.get() / 100.0, 3)
+        self.render_settings.release_fade_duration_sec = round(self.release_fade_duration_var.get() / 100.0, 3)
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
@@ -537,10 +681,22 @@ class MidiVideoApp:
         self.glow_style_var.set(self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var.set(self._animation_value_to_label[self.render_settings.animation_style])
         self.afterimage_style_var.set(self._afterimage_value_to_label[self.render_settings.afterimage_style])
+        self.release_fade_style_var.set(self._release_fade_value_to_label[self.render_settings.release_fade_style])
+        self.release_fade_curve_var.set(self._release_curve_value_to_label[self.render_settings.release_fade_curve])
         self.glow_strength_var.set(self.render_settings.glow_strength * 100.0)
         self.animation_strength_var.set(self.render_settings.animation_strength * 100.0)
         self.animation_speed_var.set(self.render_settings.animation_speed * 100.0)
         self.afterimage_strength_var.set(self.render_settings.afterimage_strength * 100.0)
+        self.note_length_scale_var.set(self.render_settings.note_length_scale * 100.0)
+        self.note_height_scale_var.set(self.render_settings.note_height_scale * 100.0)
+        self.horizontal_padding_var.set(self.render_settings.horizontal_padding_ratio * 100.0)
+        self.vertical_padding_var.set(self.render_settings.vertical_padding_ratio * 100.0)
+        self.idle_outline_width_var.set(self.render_settings.idle_outline_width * 100.0)
+        self.active_outline_width_var.set(self.render_settings.active_outline_width * 100.0)
+        self.afterimage_outline_width_var.set(self.render_settings.afterimage_outline_width * 100.0)
+        self.afterimage_duration_var.set(self.render_settings.afterimage_duration_sec * 100.0)
+        self.afterimage_padding_var.set(self.render_settings.afterimage_padding_scale * 100.0)
+        self.release_fade_duration_var.set(self.render_settings.release_fade_duration_sec * 100.0)
         self._update_slider_labels()
 
         for field_name, label in self._color_swatches.items():
@@ -555,6 +711,16 @@ class MidiVideoApp:
         self.animation_strength_text_var.set(f"{self.animation_strength_var.get():.0f}%")
         self.animation_speed_text_var.set(f"{self.animation_speed_var.get():.0f}%")
         self.afterimage_strength_text_var.set(f"{self.afterimage_strength_var.get():.0f}%")
+        self.note_length_scale_text_var.set(f"{self.note_length_scale_var.get():.0f}%")
+        self.note_height_scale_text_var.set(f"{self.note_height_scale_var.get():.0f}%")
+        self.horizontal_padding_text_var.set(f"{self.horizontal_padding_var.get():.0f}%")
+        self.vertical_padding_text_var.set(f"{self.vertical_padding_var.get():.0f}%")
+        self.idle_outline_width_text_var.set(f"{self.idle_outline_width_var.get() / 100.0:.2f}x")
+        self.active_outline_width_text_var.set(f"{self.active_outline_width_var.get() / 100.0:.2f}x")
+        self.afterimage_outline_width_text_var.set(f"{self.afterimage_outline_width_var.get() / 100.0:.2f}x")
+        self.afterimage_duration_text_var.set(f"{self.afterimage_duration_var.get() / 100.0:.2f}秒")
+        self.afterimage_padding_text_var.set(f"{self.afterimage_padding_var.get() / 100.0:.2f}x")
+        self.release_fade_duration_text_var.set(f"{self.release_fade_duration_var.get() / 100.0:.2f}秒")
 
     def _schedule_playback_tick(self) -> None:
         self._handle_playback_tick()
