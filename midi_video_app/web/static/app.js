@@ -1,17 +1,9 @@
-const boot = window.APP_BOOTSTRAP;
+const boot = window.APP_BOOTSTRAP || {};
 
-const presetDescriptions = {
-  "モノクロフラッシュ": "硬めのコントラストでタイトルカード風。",
-  "アイスブルー": "透明感と冷たい光でクリーンに。",
-  "サンセット": "柔らかい熱と余韻が残る夕景系。",
-  "エメラルド": "深い緑に軽いアーケード感を追加。",
-  "マゼンタネオン": "夜景ネオンみたいな派手さ重視。",
-  "ゴールドスパーク": "金属感とレトロゲーム感を両立。",
-  "アーケード": "黒ベースに走査線っぽい空気感。",
-  "オーロラグラス": "最近っぽいガラス感とオーロラ発光。",
-  "シネマノワール": "暗い空気に上品な縁光を足したシネマ調。",
-  "シトラスポップ": "鮮やかな差し色で軽く華やかに。",
-};
+const DEFAULT_EXPORT_FPS = Number(boot.defaultFps) || 120;
+const MAX_EXPORT_FPS = 240;
+const PREVIEW_INPUT_DEBOUNCE_MS = 16;
+const PREVIEW_FRAME_INTERVAL_MS = 24;
 
 const state = {
   projectId: null,
@@ -46,6 +38,9 @@ const elements = {
   measureText: document.getElementById("measureText"),
   themeBadge: document.getElementById("themeBadge"),
   themePresetGrid: document.getElementById("themePresetGrid"),
+  presetNameInput: document.getElementById("presetNameInput"),
+  savePresetButton: document.getElementById("savePresetButton"),
+  deletePresetButton: document.getElementById("deletePresetButton"),
   themeSelect: document.getElementById("themeSelect"),
   cornerStyleSelect: document.getElementById("cornerStyleSelect"),
   glowStyleSelect: document.getElementById("glowStyleSelect"),
@@ -136,6 +131,19 @@ const scaledSettingFields = new Set([
   "release_fade_duration_sec",
 ]);
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
 function populateSelect(select, items, selectedValue) {
   select.innerHTML = "";
   items.forEach((item) => {
@@ -161,12 +169,27 @@ function wrapViewTransition(update) {
 }
 
 function hexToRgbString(hex) {
-  const normalized = hex.replace("#", "");
+  const normalized = String(hex || "").replace("#", "");
   const full = normalized.length === 3
     ? normalized.split("").map((value) => value + value).join("")
-    : normalized;
-  const values = [0, 2, 4].map((index) => parseInt(full.slice(index, index + 2), 16));
+    : normalized.padEnd(6, "0").slice(0, 6);
+  const values = [0, 2, 4].map((index) => Number.parseInt(full.slice(index, index + 2), 16));
   return values.join(" ");
+}
+
+function getThemeOrder() {
+  if (Array.isArray(boot.themeOrder) && boot.themeOrder.length) {
+    return boot.themeOrder;
+  }
+  return Object.keys(boot.themePresets || {});
+}
+
+function getUserThemeNames() {
+  return Array.isArray(boot.userThemeNames) ? boot.userThemeNames : [];
+}
+
+function isUserTheme(themeName) {
+  return getUserThemeNames().includes(themeName);
 }
 
 function syncThemeAtmosphere(settings) {
@@ -197,7 +220,13 @@ function syncSliderLabels() {
 }
 
 function updateThemeBadge() {
-  elements.themeBadge.textContent = elements.themeSelect.value || boot.defaultTheme;
+  const themeName = elements.themeSelect.value || boot.defaultTheme;
+  elements.themeBadge.textContent = themeName;
+  elements.themeBadge.dataset.mode = themeName === boot.customTheme
+    ? "custom"
+    : isUserTheme(themeName)
+      ? "saved"
+      : "builtin";
 }
 
 function highlightActivePreset() {
@@ -207,6 +236,11 @@ function highlightActivePreset() {
     card.classList.toggle("is-active", active);
     card.setAttribute("aria-pressed", String(active));
   });
+}
+
+function updatePresetActionState() {
+  const currentTheme = elements.themeSelect.value;
+  elements.deletePresetButton.disabled = !isUserTheme(currentTheme);
 }
 
 function applySettings(settings) {
@@ -223,6 +257,7 @@ function applySettings(settings) {
   syncThemeAtmosphere(settings);
   updateThemeBadge();
   highlightActivePreset();
+  updatePresetActionState();
 }
 
 function collectSettings() {
@@ -240,20 +275,53 @@ function setStatus(message) {
   elements.statusText.textContent = message;
 }
 
+function refreshThemeChoices(selectedTheme) {
+  populateSelect(elements.themeSelect, boot.choices.themes || [], selectedTheme);
+  if (!Array.from(elements.themeSelect.options).some((option) => option.value === selectedTheme)) {
+    elements.themeSelect.value = boot.defaultTheme;
+  }
+}
+
 function markCustomTheme() {
   if (elements.themeSelect.value !== boot.customTheme) {
     elements.themeSelect.value = boot.customTheme;
   }
   updateThemeBadge();
   highlightActivePreset();
+  updatePresetActionState();
+}
+
+function syncSelectionToTheme(themeName) {
+  elements.themeSelect.value = themeName;
+  elements.presetNameInput.value = isUserTheme(themeName) ? themeName : "";
+  applySettings(boot.themePresets[themeName] || boot.defaultSettings);
+}
+
+function syncPresetBootstrap(payload) {
+  if (payload.themePresets) {
+    boot.themePresets = payload.themePresets;
+  }
+  if (payload.themeOrder) {
+    boot.themeOrder = payload.themeOrder;
+  }
+  if (payload.userThemeNames) {
+    boot.userThemeNames = payload.userThemeNames;
+  }
+  if (payload.choices?.themes) {
+    boot.choices.themes = payload.choices.themes;
+  }
 }
 
 function renderPresetCards() {
-  const themeNames = Object.keys(boot.themePresets);
   elements.themePresetGrid.innerHTML = "";
 
-  themeNames.forEach((themeName) => {
+  getThemeOrder().forEach((themeName) => {
     const settings = boot.themePresets[themeName];
+    if (!settings) {
+      return;
+    }
+
+    const isSaved = isUserTheme(themeName);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "preset-card";
@@ -262,8 +330,11 @@ function renderPresetCards() {
     button.innerHTML = `
       <div class="preset-card-header">
         <div>
-          <span class="preset-card-title">${themeName}</span>
-          <span class="preset-card-subtitle">${presetDescriptions[themeName] || "トーンの違いをすぐ試せるプリセットです。"}</span>
+          <span class="preset-card-title">${escapeHtml(themeName)}</span>
+          <span class="preset-card-subtitle">${isSaved ? "保存済みプリセット。ブラウザ版とデスクトップ版の両方で呼び出せます。" : "標準プリセット。ここから好みに寄せて保存できます。"}</span>
+        </div>
+        <div class="preset-card-meta">
+          <span class="preset-card-pill ${isSaved ? "user" : "builtin"}">${isSaved ? "保存済み" : "標準"}</span>
         </div>
       </div>
       <div class="preset-swatches">
@@ -276,8 +347,7 @@ function renderPresetCards() {
 
     button.addEventListener("click", () => {
       wrapViewTransition(() => {
-        elements.themeSelect.value = themeName;
-        applySettings(boot.themePresets[themeName]);
+        syncSelectionToTheme(themeName);
       });
       queuePreview(true);
     });
@@ -288,6 +358,87 @@ function renderPresetCards() {
   highlightActivePreset();
 }
 
+async function saveCurrentPreset() {
+  const presetName = elements.presetNameInput.value.trim();
+  if (!presetName) {
+    window.alert("保存するプリセット名を入力してください。");
+    elements.presetNameInput.focus();
+    return;
+  }
+
+  if (isUserTheme(presetName) && !window.confirm(`「${presetName}」を上書き保存しますか？`)) {
+    return;
+  }
+
+  elements.savePresetButton.disabled = true;
+
+  try {
+    const response = await fetch("/api/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: presetName,
+        settings: collectSettings(),
+      }),
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "プリセットの保存に失敗しました。");
+    }
+
+    syncPresetBootstrap(payload);
+    wrapViewTransition(() => {
+      refreshThemeChoices(payload.savedName);
+      renderPresetCards();
+      syncSelectionToTheme(payload.savedName);
+    });
+    setStatus(`プリセット「${payload.savedName}」を保存しました。`);
+  } catch (error) {
+    setStatus(error.message);
+  } finally {
+    elements.savePresetButton.disabled = false;
+  }
+}
+
+async function deleteSelectedPreset() {
+  const presetName = elements.themeSelect.value;
+  if (!isUserTheme(presetName)) {
+    setStatus("削除できるのは保存済みプリセットだけです。");
+    return;
+  }
+
+  if (!window.confirm(`「${presetName}」を削除しますか？`)) {
+    return;
+  }
+
+  elements.deletePresetButton.disabled = true;
+
+  try {
+    const response = await fetch(`/api/presets/${encodeURIComponent(presetName)}`, {
+      method: "DELETE",
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "プリセットの削除に失敗しました。");
+    }
+
+    syncPresetBootstrap(payload);
+    wrapViewTransition(() => {
+      refreshThemeChoices(boot.defaultTheme);
+      renderPresetCards();
+      syncSelectionToTheme(boot.defaultTheme);
+    });
+    setStatus(`プリセット「${presetName}」を削除しました。`);
+    queuePreview(true);
+  } catch (error) {
+    setStatus(error.message);
+  } finally {
+    updatePresetActionState();
+  }
+}
+
 async function uploadMidi(file) {
   if (!file) {
     return;
@@ -296,13 +447,13 @@ async function uploadMidi(file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  setStatus("MIDIを読み込み中...");
+  setStatus("MIDI を読み込み中です...");
   elements.exportButton.disabled = true;
 
   const response = await fetch("/api/projects", { method: "POST", body: formData });
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error || "MIDIの読み込みに失敗しました。");
+    throw new Error(payload.error || "MIDI の読み込みに失敗しました。");
   }
 
   state.projectId = payload.projectId;
@@ -311,6 +462,7 @@ async function uploadMidi(file) {
   state.measures = payload.measures || [];
   state.currentTime = 0;
   state.playing = false;
+  state.lastPreviewAt = 0;
 
   elements.fileName.textContent = payload.fileName;
   elements.timelineRange.max = String(Math.max(payload.durationSec, 0.001));
@@ -319,7 +471,7 @@ async function uploadMidi(file) {
   elements.previewFrame.dataset.loaded = "true";
   document.body.classList.add("has-project");
   updateMeta();
-  setStatus("MIDIを読み込みました。");
+  setStatus("MIDI を読み込みました。");
   queuePreview(true);
 }
 
@@ -357,7 +509,7 @@ async function requestPreview() {
     });
 
     if (!response.ok) {
-      let message = "プレビューの取得に失敗しました。";
+      let message = "プレビューの更新に失敗しました。";
       try {
         const payload = await response.json();
         message = payload.error || message;
@@ -390,7 +542,7 @@ function queuePreview(immediate = false) {
     return;
   }
   window.clearTimeout(state.previewTimer);
-  const delay = immediate ? 0 : 90;
+  const delay = immediate ? 0 : PREVIEW_INPUT_DEBOUNCE_MS;
   state.previewTimer = window.setTimeout(() => {
     requestPreview();
   }, delay);
@@ -437,7 +589,7 @@ function jumpMeasure(direction) {
 
 function togglePlayback() {
   if (!state.projectId) {
-    setStatus("先にMIDIを読み込んでください。");
+    setStatus("先に MIDI を読み込んでください。");
     return;
   }
   if (state.playing) {
@@ -468,7 +620,7 @@ function animationLoop(now) {
     state.currentTime = Math.min(state.durationSec, state.playbackOriginSec + elapsedSec);
     updateMeta();
 
-    if (now - state.lastPreviewAt > 85) {
+    if (now - state.lastPreviewAt >= PREVIEW_FRAME_INTERVAL_MS) {
       requestPreview();
     }
 
@@ -481,14 +633,20 @@ function animationLoop(now) {
   window.requestAnimationFrame(animationLoop);
 }
 
+function normalizeFpsInput() {
+  const normalized = clamp(Number(elements.fpsInput.value) || DEFAULT_EXPORT_FPS, 1, MAX_EXPORT_FPS);
+  elements.fpsInput.value = String(Math.round(normalized));
+  return normalized;
+}
+
 async function exportVideo() {
   if (!state.projectId) {
-    setStatus("先にMIDIを読み込んでください。");
+    setStatus("先に MIDI を読み込んでください。");
     return;
   }
 
-  const fps = Math.max(1, Math.min(120, Number(elements.fpsInput.value) || 30));
-  setStatus("動画を書き出し中...");
+  const fps = normalizeFpsInput();
+  setStatus(`${fps}FPS で動画を書き出しています...`);
   elements.exportButton.disabled = true;
 
   try {
@@ -557,31 +715,41 @@ function installPointerLighting() {
 }
 
 function initialize() {
-  populateSelect(elements.themeSelect, boot.choices.themes, boot.defaultTheme);
-  populateSelect(elements.cornerStyleSelect, boot.choices.corners, boot.defaultSettings.corner_style);
-  populateSelect(elements.glowStyleSelect, boot.choices.glows, boot.defaultSettings.glow_style);
-  populateSelect(elements.animationStyleSelect, boot.choices.animations, boot.defaultSettings.animation_style);
-  populateSelect(elements.afterimageStyleSelect, boot.choices.afterimages, boot.defaultSettings.afterimage_style);
-  populateSelect(elements.releaseFadeStyleSelect, boot.choices.releaseFadeStyles, boot.defaultSettings.release_fade_style);
-  populateSelect(elements.releaseFadeCurveSelect, boot.choices.releaseFadeCurves, boot.defaultSettings.release_fade_curve);
+  populateSelect(elements.themeSelect, boot.choices.themes || [], boot.defaultTheme);
+  populateSelect(elements.cornerStyleSelect, boot.choices.corners || [], boot.defaultSettings.corner_style);
+  populateSelect(elements.glowStyleSelect, boot.choices.glows || [], boot.defaultSettings.glow_style);
+  populateSelect(elements.animationStyleSelect, boot.choices.animations || [], boot.defaultSettings.animation_style);
+  populateSelect(elements.afterimageStyleSelect, boot.choices.afterimages || [], boot.defaultSettings.afterimage_style);
+  populateSelect(elements.releaseFadeStyleSelect, boot.choices.releaseFadeStyles || [], boot.defaultSettings.release_fade_style);
+  populateSelect(elements.releaseFadeCurveSelect, boot.choices.releaseFadeCurves || [], boot.defaultSettings.release_fade_curve);
+
+  elements.fpsInput.value = String(DEFAULT_EXPORT_FPS);
+  elements.exportButton.disabled = true;
 
   renderPresetCards();
-  applySettings(boot.defaultSettings);
+  syncSelectionToTheme(boot.defaultTheme);
   updateMeta();
   installPointerLighting();
 
   elements.themeSelect.addEventListener("change", () => {
     const selectedTheme = elements.themeSelect.value;
     if (selectedTheme === boot.customTheme) {
-      updateThemeBadge();
-      highlightActivePreset();
+      markCustomTheme();
       return;
     }
 
     wrapViewTransition(() => {
-      applySettings(boot.themePresets[selectedTheme]);
+      syncSelectionToTheme(selectedTheme);
     });
     queuePreview(true);
+  });
+
+  elements.savePresetButton.addEventListener("click", () => {
+    saveCurrentPreset();
+  });
+
+  elements.deletePresetButton.addEventListener("click", () => {
+    deleteSelectedPreset();
   });
 
   elements.fileInput.addEventListener("change", async (event) => {
@@ -643,6 +811,7 @@ function initialize() {
     queuePreview();
   });
 
+  elements.fpsInput.addEventListener("change", normalizeFpsInput);
   elements.playButton.addEventListener("click", togglePlayback);
   elements.stopButton.addEventListener("click", stopPlayback);
   elements.prevMeasureButton.addEventListener("click", () => jumpMeasure(-1));
@@ -651,6 +820,12 @@ function initialize() {
 
   window.addEventListener("resize", () => {
     queuePreview();
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (state.previewUrl) {
+      URL.revokeObjectURL(state.previewUrl);
+    }
   });
 
   window.requestAnimationFrame(animationLoop);

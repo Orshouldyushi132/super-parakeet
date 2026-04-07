@@ -114,6 +114,17 @@
             <p>最近のデザイン事例をヒントに、空気感が違う見た目をすぐ試せるようにしました。</p>
           </div>
           <div id="themePresetGrid" class="preset-grid"></div>
+          <div class="preset-actions">
+            <label class="field">
+              <span>保存プリセット名</span>
+              <input id="presetNameInput" type="text" placeholder="例: しろふわアウトライン">
+            </label>
+            <div class="preset-action-row">
+              <button id="savePresetButton" class="primary" type="button">現在設定を保存</button>
+              <button id="deletePresetButton" type="button">選択プリセットを削除</button>
+            </div>
+            <p class="preset-helper">保存したプリセットはブラウザ版とデスクトップ版の両方から呼び出せます。</p>
+          </div>
         </section>
 
         <aside class="panel settings-panel reveal">
@@ -277,9 +288,9 @@
           <div class="export-box">
             <label class="field">
               <span>FPS</span>
-              <input id="fpsInput" type="number" min="1" max="120" value="30">
+              <input id="fpsInput" type="number" min="1" max="240" value="120">
             </label>
-            <p>ブラウザ版のプレビューは軽く保ちつつ、最終書き出しは 1920x1080 のまま行います。</p>
+            <p>初期値は 120FPS です。プレビュー側も更新間隔を詰めて、見た目の確認をしやすくしています。</p>
           </div>
         </aside>
       </div>

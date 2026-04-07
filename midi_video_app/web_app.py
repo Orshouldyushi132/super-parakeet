@@ -22,11 +22,18 @@ from .models import (
     GLOW_STYLE_CHOICES,
     RELEASE_FADE_CURVE_CHOICES,
     RELEASE_FADE_STYLE_CHOICES,
-    THEME_PRESETS,
     MidiProject,
     get_render_settings_for_theme,
     render_settings_from_mapping,
     render_settings_to_dict,
+)
+from .preset_store import (
+    delete_user_preset,
+    preset_order,
+    presets_payload,
+    save_user_preset,
+    theme_name_choices,
+    user_preset_names,
 )
 from .renderer import ProjectRenderer
 
@@ -58,10 +65,13 @@ def index():
     bootstrap = {
         "defaultTheme": DEFAULT_THEME_NAME,
         "customTheme": CUSTOM_THEME_NAME,
+        "defaultFps": 120,
         "defaultSettings": render_settings_to_dict(get_render_settings_for_theme(DEFAULT_THEME_NAME)),
-        "themePresets": {preset.name: render_settings_to_dict(preset.settings) for preset in THEME_PRESETS},
+        "themePresets": presets_payload(),
+        "themeOrder": preset_order(),
+        "userThemeNames": user_preset_names(),
         "choices": {
-            "themes": [preset.name for preset in THEME_PRESETS] + [CUSTOM_THEME_NAME],
+            "themes": theme_name_choices(),
             "corners": _choices_to_payload(CORNER_STYLE_CHOICES),
             "glows": _choices_to_payload(GLOW_STYLE_CHOICES),
             "animations": _choices_to_payload(ANIMATION_STYLE_CHOICES),
@@ -119,6 +129,42 @@ def create_project():
     )
 
 
+@app.post("/api/presets")
+def create_preset():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name", ""))
+    settings = render_settings_from_mapping(payload.get("settings"))
+    try:
+        normalized_name = save_user_preset(name, settings)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    return jsonify(
+        {
+            "savedName": normalized_name,
+            "themePresets": presets_payload(),
+            "themeOrder": preset_order(),
+            "userThemeNames": user_preset_names(),
+            "choices": {"themes": theme_name_choices()},
+        }
+    )
+
+
+@app.delete("/api/presets/<path:preset_name>")
+def remove_preset(preset_name: str):
+    if not delete_user_preset(preset_name):
+        return jsonify({"error": "保存済みプリセットが見つかりません。"}), 404
+
+    return jsonify(
+        {
+            "themePresets": presets_payload(),
+            "themeOrder": preset_order(),
+            "userThemeNames": user_preset_names(),
+            "choices": {"themes": theme_name_choices()},
+        }
+    )
+
+
 @app.post("/api/projects/<project_id>/preview")
 def preview_project(project_id: str):
     stored_project = _PROJECTS.get(project_id)
@@ -148,7 +194,7 @@ def export_project(project_id: str):
 
     payload = request.get_json(silent=True) or {}
     settings = render_settings_from_mapping(payload.get("settings"))
-    fps = _coerce_int(payload.get("fps"), 30, 1, 120)
+    fps = _coerce_int(payload.get("fps"), 120, 1, 240)
     width = _coerce_int(payload.get("width"), 1920, 320, 3840)
     height = _coerce_int(payload.get("height"), 1080, 180, 2160)
 

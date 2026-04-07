@@ -19,10 +19,16 @@ from .models import (
     GLOW_STYLE_CHOICES,
     RELEASE_FADE_CURVE_CHOICES,
     RELEASE_FADE_STYLE_CHOICES,
-    THEME_PRESETS,
     MidiProject,
     clone_render_settings,
     get_render_settings_for_theme,
+)
+from .preset_store import (
+    delete_user_preset,
+    get_render_settings_for_name,
+    is_user_preset,
+    save_user_preset,
+    theme_name_choices,
 )
 from .renderer import ProjectRenderer
 
@@ -31,7 +37,7 @@ PREVIEW_WIDTH = 960
 PREVIEW_HEIGHT = 540
 EXPORT_WIDTH = 1920
 EXPORT_HEIGHT = 1080
-DEFAULT_FPS = 30
+DEFAULT_FPS = 120
 
 
 class MidiVideoApp:
@@ -65,13 +71,14 @@ class MidiVideoApp:
         self._release_fade_label_to_value = {label: value for value, label in RELEASE_FADE_STYLE_CHOICES}
         self._release_curve_value_to_label = {value: label for value, label in RELEASE_FADE_CURVE_CHOICES}
         self._release_curve_label_to_value = {label: value for value, label in RELEASE_FADE_CURVE_CHOICES}
-        self._theme_names = [preset.name for preset in THEME_PRESETS] + [CUSTOM_THEME_NAME]
+        self._theme_names = theme_name_choices()
 
         self.file_label_var = tk.StringVar(value="MIDIファイルが読み込まれていません")
         self.status_var = tk.StringVar(value="MIDIファイルを選択してください。")
         self.time_var = tk.StringVar(value="00:00.000 / 00:00.000")
         self.measure_var = tk.StringVar(value="小節: -")
         self.fps_var = tk.StringVar(value=str(DEFAULT_FPS))
+        self.preset_name_var = tk.StringVar()
 
         self.theme_var = tk.StringVar(value=DEFAULT_THEME_NAME)
         self.corner_style_var = tk.StringVar(value=self._corner_value_to_label[self.render_settings.corner_style])
@@ -124,17 +131,62 @@ class MidiVideoApp:
         self._color_value_vars: dict[str, tk.StringVar] = {}
         self._color_swatches: dict[str, tk.Label] = {}
 
+        self._configure_styles()
         self._build_ui()
         self._sync_style_controls_from_settings(selected_theme=DEFAULT_THEME_NAME)
         self._schedule_playback_tick()
 
-    def _build_ui(self) -> None:
-        self.root.configure(background="#111111")
+    def _configure_styles(self) -> None:
+        style = ttk.Style(self.root)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
 
+        bg = "#081018"
+        panel = "#101822"
+        panel_soft = "#16202c"
+        line = "#263446"
+        text = "#f5f7fb"
+        muted = "#9eb0c6"
+        accent = "#8cf6d7"
+        accent_soft = "#7dd3fc"
+
+        self.root.configure(background=bg)
+        style.configure(".", background=bg, foreground=text, fieldbackground=panel_soft)
+        style.configure("TFrame", background=bg)
+        style.configure("Surface.TFrame", background=panel)
+        style.configure("Card.TFrame", background=panel_soft)
+        style.configure("TLabel", background=bg, foreground=text)
+        style.configure("Muted.TLabel", background=bg, foreground=muted)
+        style.configure("Hero.TLabel", background=bg, foreground=text, font=("Yu Gothic UI Semibold", 18))
+        style.configure("TLabelframe", background=bg, foreground=text, bordercolor=line, relief="solid")
+        style.configure("TLabelframe.Label", background=bg, foreground=text, font=("Yu Gothic UI Semibold", 10))
+        style.configure("TButton", padding=(10, 7), background=panel_soft, foreground=text, bordercolor=line)
+        style.map("TButton", background=[("active", "#1b2a38")], bordercolor=[("active", accent_soft)])
+        style.configure("Accent.TButton", background=accent, foreground="#061018", bordercolor=accent, padding=(12, 8))
+        style.map("Accent.TButton", background=[("active", "#b4fff1")], foreground=[("active", "#041018")])
+        style.configure("TEntry", fieldbackground=panel_soft, foreground=text, insertcolor=text, bordercolor=line)
+        style.configure("TCombobox", fieldbackground=panel_soft, foreground=text, arrowcolor=text, bordercolor=line)
+        style.map("TCombobox", fieldbackground=[("readonly", panel_soft)], selectbackground=[("readonly", panel_soft)])
+        style.configure("TNotebook", background=bg, borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(12, 8), background=panel_soft, foreground=muted)
+        style.map("TNotebook.Tab", background=[("selected", panel), ("active", panel_soft)], foreground=[("selected", text)])
+        style.configure("Horizontal.TScale", background=bg, troughcolor=panel_soft)
+        style.configure("TProgressbar", troughcolor=panel_soft, background=accent_soft, bordercolor=line)
+
+    def _build_ui(self) -> None:
         outer = ttk.Frame(self.root, padding=16)
         outer.pack(fill="both", expand=True)
 
-        controls = ttk.Frame(outer)
+        header = ttk.Frame(outer)
+        header.pack(fill="x", pady=(0, 12))
+        ttk.Label(header, text="MIDI Motion Studio", style="Hero.TLabel").pack(anchor="w")
+        ttk.Label(
+            header,
+            text="見た目を詰めながら、1小節ごとの固定表示をそのまま動画にできます。",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
+
+        controls = ttk.Frame(outer, style="Surface.TFrame", padding=14)
         controls.pack(fill="x")
 
         ttk.Button(controls, text="MIDIを開く", command=self.open_midi).pack(side="left")
@@ -142,14 +194,17 @@ class MidiVideoApp:
         ttk.Button(controls, text="停止", command=self.stop_playback).pack(side="left", padx=(8, 0))
         ttk.Button(controls, text="前の小節へ", command=lambda: self.jump_measure(-1)).pack(side="left", padx=(8, 0))
         ttk.Button(controls, text="次の小節へ", command=lambda: self.jump_measure(1)).pack(side="left", padx=(8, 0))
-        ttk.Button(controls, text="MP4を書き出す", command=self.export_mp4).pack(side="left", padx=(16, 0))
+        ttk.Button(controls, text="MP4を書き出す", style="Accent.TButton", command=self.export_mp4).pack(side="left", padx=(16, 0))
 
-        fps_frame = ttk.Frame(controls)
+        fps_frame = ttk.Frame(controls, style="Surface.TFrame")
         fps_frame.pack(side="right")
-        ttk.Label(fps_frame, text="FPS").pack(side="left", padx=(0, 6))
+        ttk.Label(fps_frame, text="FPS", style="Muted.TLabel").pack(side="left", padx=(0, 6))
         ttk.Entry(fps_frame, width=6, textvariable=self.fps_var).pack(side="left")
 
-        ttk.Label(outer, textvariable=self.file_label_var).pack(fill="x", pady=(12, 8))
+        meta = ttk.Frame(outer)
+        meta.pack(fill="x", pady=(12, 8))
+        ttk.Label(meta, textvariable=self.file_label_var).pack(side="left")
+        ttk.Label(meta, textvariable=self.status_var, style="Muted.TLabel").pack(side="right")
 
         content = ttk.Frame(outer)
         content.pack(fill="both", expand=True)
@@ -157,7 +212,7 @@ class MidiVideoApp:
         preview_panel = ttk.LabelFrame(content, text="プレビュー", padding=8)
         preview_panel.pack(side="left", fill="both", expand=True)
 
-        self.preview_label = ttk.Label(preview_panel, anchor="center")
+        self.preview_label = tk.Label(preview_panel, anchor="center", bg="#020406", relief="flat")
         self.preview_label.pack(fill="both", expand=True)
 
         settings_panel = ttk.LabelFrame(content, text="見た目設定", padding=12)
@@ -177,7 +232,7 @@ class MidiVideoApp:
 
         ttk.Label(info, textvariable=self.time_var).pack(side="left")
         ttk.Label(info, textvariable=self.measure_var).pack(side="left", padx=(20, 0))
-        ttk.Label(info, textvariable=self.status_var).pack(side="right")
+        ttk.Label(info, text="初期値は 120FPS です。", style="Muted.TLabel").pack(side="right")
 
         self.progress = ttk.Progressbar(outer, mode="determinate")
         self.progress.pack(fill="x", pady=(12, 0))
@@ -215,6 +270,42 @@ class MidiVideoApp:
         panel.columnconfigure(1, weight=1)
         panel.columnconfigure(2, weight=1)
 
+        ttk.Label(panel, text="保存プリセット").grid(row=row, column=0, sticky="w")
+        self.preset_name_entry = ttk.Entry(panel, textvariable=self.preset_name_var)
+        self.preset_name_entry.grid(row=row, column=1, columnspan=3, sticky="ew")
+
+        row += 1
+        self.save_preset_button = ttk.Button(
+            panel,
+            text="現在設定を保存",
+            style="Accent.TButton",
+            command=self._save_current_preset,
+        )
+        self.save_preset_button.grid(
+            row=row,
+            column=1,
+            sticky="ew",
+            pady=(8, 0),
+        )
+        self.delete_preset_button = ttk.Button(panel, text="選択プリセットを削除", command=self._delete_selected_preset)
+        self.delete_preset_button.grid(
+            row=row,
+            column=2,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(8, 0),
+        )
+
+        row += 1
+        ttk.Label(
+            panel,
+            text="今の見た目を名前付きで保存して、あとからすぐ呼び戻せます。",
+            style="Muted.TLabel",
+            wraplength=320,
+            justify="left",
+        ).grid(row=row, column=0, columnspan=4, sticky="w", pady=(8, 0))
+
+        row += 1
         ttk.Label(panel, text="テーマ").grid(row=row, column=0, sticky="w")
         self.theme_combo = ttk.Combobox(panel, state="readonly", values=self._theme_names, textvariable=self.theme_var, width=18)
         self.theme_combo.grid(row=row, column=1, columnspan=3, sticky="ew")
@@ -462,6 +553,67 @@ class MidiVideoApp:
         )
         ttk.Label(panel, textvariable=text_variable).grid(row=row, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
 
+    def _refresh_theme_choices(self, selected_theme: str | None = None) -> None:
+        self._theme_names = theme_name_choices()
+        if hasattr(self, "theme_combo"):
+            self.theme_combo.configure(values=self._theme_names)
+        if selected_theme and selected_theme in self._theme_names:
+            self.theme_var.set(selected_theme)
+        elif self.theme_var.get() not in self._theme_names:
+            self.theme_var.set(DEFAULT_THEME_NAME)
+        self._update_preset_button_states()
+
+    def _update_preset_button_states(self) -> None:
+        if hasattr(self, "delete_preset_button"):
+            if is_user_preset(self.theme_var.get()):
+                self.delete_preset_button.state(["!disabled"])
+            else:
+                self.delete_preset_button.state(["disabled"])
+
+    def _load_theme_settings(self, theme_name: str):
+        if theme_name == CUSTOM_THEME_NAME:
+            return None
+        return get_render_settings_for_name(theme_name) or get_render_settings_for_theme(theme_name)
+
+    def _save_current_preset(self) -> None:
+        preset_name = self.preset_name_var.get().strip()
+        if not preset_name:
+            messagebox.showinfo("プリセット名を入力してください", "保存するプリセット名を入力してください。")
+            return
+        if is_user_preset(preset_name):
+            overwrite = messagebox.askyesno("上書き確認", f"`{preset_name}` を上書きしますか？")
+            if not overwrite:
+                return
+        try:
+            saved_name = save_user_preset(preset_name, clone_render_settings(self.render_settings))
+        except ValueError as error:
+            messagebox.showerror("プリセットを保存できません", str(error))
+            return
+
+        self._refresh_theme_choices(saved_name)
+        self.status_var.set(f"プリセット `{saved_name}` を保存しました。")
+        self.theme_var.set(saved_name)
+        self._update_preset_button_states()
+
+    def _delete_selected_preset(self) -> None:
+        theme_name = self.theme_var.get()
+        if not is_user_preset(theme_name):
+            messagebox.showinfo("削除できません", "保存済みユーザープリセットを選んだときだけ削除できます。")
+            return
+        should_delete = messagebox.askyesno("プリセット削除", f"`{theme_name}` を削除しますか？")
+        if not should_delete:
+            return
+        if delete_user_preset(theme_name):
+            self._refresh_theme_choices(DEFAULT_THEME_NAME)
+            self.render_settings = get_render_settings_for_theme(DEFAULT_THEME_NAME)
+            if self.renderer:
+                self.renderer.set_settings(self.render_settings)
+            self.preset_name_var.set("")
+            self._sync_style_controls_from_settings(selected_theme=DEFAULT_THEME_NAME)
+            self._refresh_preview_if_loaded()
+            self.status_var.set(f"プリセット `{theme_name}` を削除しました。")
+        self._update_preset_button_states()
+
     def open_midi(self) -> None:
         midi_path = filedialog.askopenfilename(
             title="MIDIファイルを選択",
@@ -619,9 +771,13 @@ class MidiVideoApp:
 
         theme_name = self.theme_var.get()
         if theme_name == CUSTOM_THEME_NAME:
+            self.preset_name_var.set("")
             return
 
-        self.render_settings = get_render_settings_for_theme(theme_name)
+        loaded_settings = self._load_theme_settings(theme_name)
+        if loaded_settings is None:
+            return
+        self.render_settings = loaded_settings
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self._sync_style_controls_from_settings(selected_theme=theme_name)
@@ -647,6 +803,7 @@ class MidiVideoApp:
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
+        self.preset_name_var.set("")
         self._refresh_preview_if_loaded()
 
     def _on_strength_changed(self, _raw_value=None) -> None:
@@ -670,12 +827,14 @@ class MidiVideoApp:
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
+        self.preset_name_var.set("")
         self._update_slider_labels()
         self._refresh_preview_if_loaded()
 
     def _sync_style_controls_from_settings(self, selected_theme: str) -> None:
         self._updating_style_controls = True
 
+        self._refresh_theme_choices(selected_theme)
         self.theme_var.set(selected_theme)
         self.corner_style_var.set(self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var.set(self._glow_value_to_label[self.render_settings.glow_style])
@@ -704,6 +863,9 @@ class MidiVideoApp:
             label.configure(background=color_value)
             self._color_value_vars[field_name].set(color_value.upper())
 
+        self.preset_name_var.set(selected_theme if is_user_preset(selected_theme) else "")
+        self._update_preset_button_states()
+
         self._updating_style_controls = False
 
     def _update_slider_labels(self) -> None:
@@ -724,7 +886,7 @@ class MidiVideoApp:
 
     def _schedule_playback_tick(self) -> None:
         self._handle_playback_tick()
-        self.root.after(33, self._schedule_playback_tick)
+        self.root.after(8, self._schedule_playback_tick)
 
     def _handle_playback_tick(self) -> None:
         if not self.project:

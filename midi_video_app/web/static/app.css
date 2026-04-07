@@ -307,6 +307,7 @@ select {
 .settings-column {
   display: grid;
   gap: 18px;
+  align-content: start;
 }
 
 .panel {
@@ -389,6 +390,17 @@ button:focus-visible,
   transform: translateY(-1px);
   border-color: var(--line-strong);
   box-shadow: 0 12px 24px rgb(var(--theme-glow-rgb) / 0.12);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+  transform: none;
+  box-shadow: none;
+}
+
+button:disabled::after {
+  display: none;
 }
 
 button.primary {
@@ -530,6 +542,18 @@ button.primary {
   font-size: 0.85rem;
 }
 
+.theme-badge[data-mode="saved"] {
+  border-color: rgb(var(--theme-active-rgb) / 0.24);
+  box-shadow: 0 0 0 1px rgb(var(--theme-active-rgb) / 0.08) inset;
+}
+
+.theme-badge[data-mode="custom"] {
+  border-style: dashed;
+  background:
+    linear-gradient(135deg, rgb(var(--theme-accent-rgb) / 0.18), rgb(var(--theme-glow-rgb) / 0.08)),
+    rgb(255 255 255 / 0.04);
+}
+
 .transport {
   margin-top: 16px;
 }
@@ -575,6 +599,25 @@ button.primary {
   margin-top: 14px;
 }
 
+.preset-actions {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+}
+
+.preset-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.preset-helper {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .preset-card {
   position: relative;
   display: grid;
@@ -610,6 +653,11 @@ button.primary {
   gap: 10px;
 }
 
+.preset-card-meta {
+  display: flex;
+  align-items: flex-start;
+}
+
 .preset-card-title {
   display: block;
   font-weight: 700;
@@ -621,6 +669,31 @@ button.primary {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.6;
+}
+
+.preset-card-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  background: rgb(255 255 255 / 0.05);
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.preset-card-pill.user {
+  border-color: rgb(var(--theme-active-rgb) / 0.2);
+  color: rgb(var(--theme-active-rgb));
+  background: rgb(var(--theme-active-rgb) / 0.08);
+}
+
+.preset-card-pill.builtin {
+  color: var(--muted);
+  background: rgb(255 255 255 / 0.04);
 }
 
 .preset-swatches {
@@ -649,6 +722,7 @@ button.primary {
 }
 
 select,
+input[type="text"],
 input[type="number"],
 input[type="color"] {
   width: 100%;
@@ -661,6 +735,7 @@ input[type="color"] {
 }
 
 select:focus-visible,
+input[type="text"]:focus-visible,
 input[type="number"]:focus-visible,
 input[type="color"]:focus-visible,
 button:focus-visible,
@@ -758,6 +833,10 @@ input[type="color"] {
   .hero-stats,
   .preset-grid,
   .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .preset-action-row {
     grid-template-columns: 1fr;
   }
 
