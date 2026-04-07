@@ -62,6 +62,9 @@ class RenderSettings:
     release_fade_style: str = "outline"
     release_fade_curve: str = "smooth"
     release_fade_duration_sec: float = 0.18
+    attack_fade_style: str = "both"
+    attack_fade_curve: str = "smooth"
+    attack_fade_duration_sec: float = 0.12
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +120,19 @@ RELEASE_FADE_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
     ("outline", "枠だけ"),
     ("fill", "塗りだけ"),
     ("both", "枠+塗り"),
+)
+
+ATTACK_FADE_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("none", "なし"),
+    ("outline", "枠だけ"),
+    ("fill", "塗りだけ"),
+    ("both", "枠+塗り"),
+)
+
+ATTACK_FADE_CURVE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("linear", "線形"),
+    ("smooth", "なめらか"),
+    ("sharp", "キレよく"),
 )
 
 RELEASE_FADE_CURVE_CHOICES: tuple[tuple[str, str], ...] = (

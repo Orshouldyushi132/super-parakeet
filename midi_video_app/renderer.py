@@ -33,6 +33,7 @@ class _AnimationState:
     jitter: float
     burst: float
     saw: float
+    attack_ratio: float = 1.0
 
 
 @dataclass(slots=True)
@@ -309,18 +310,31 @@ class ProjectRenderer:
         frame_rect: tuple[float, float, float, float],
         state: _AnimationState,
     ) -> None:
+        # Calculate attack fade visibility
+        style = self.settings.attack_fade_style
+        attack_visibility = 1.0 if style == "none" else self._attack_fade_visibility(state.attack_ratio)
+        
         fill_color = self._active_fill_color(state)
         base_radius = self._rect_radius(base_rect)
         frame_radius = self._rect_radius(frame_rect)
+        
+        # Apply attack fade to fill color based on style
+        if style in {"fill", "both"}:
+            fill_color = (fill_color[0], fill_color[1], fill_color[2], int(fill_color[3] * attack_visibility))
+        
         draw.rounded_rectangle(base_rect, radius=base_radius, fill=fill_color)
 
         outline_alpha = 225 if self.settings.glow_style in {"neon", "outline", "prism"} else 175
         outline_width = self._outline_width(base_rect, 0.12, self.settings.active_outline_width)
         if outline_width > 0:
+            if style in {"outline", "both"}:
+                outline_color = _with_alpha(self.settings.outline_color, int(outline_alpha * attack_visibility))
+            else:
+                outline_color = _with_alpha(self.settings.outline_color, outline_alpha)
             draw.rounded_rectangle(
                 base_rect,
                 radius=base_radius,
-                outline=_with_alpha(self.settings.outline_color, outline_alpha),
+                outline=outline_color,
                 width=outline_width,
             )
 
@@ -461,6 +475,16 @@ class ProjectRenderer:
         eased = progress * progress * (3.0 - 2.0 * progress)
         return 1.0 - eased
 
+    def _attack_fade_visibility(self, attack_ratio: float) -> float:
+        progress = _clamp(attack_ratio)
+        curve = self.settings.attack_fade_curve
+        if curve == "linear":
+            return progress
+        if curve == "sharp":
+            return progress ** 1.6
+        eased = progress * progress * (3.0 - 2.0 * progress)
+        return eased
+
     def _build_animation_state(self, segment: _VisibleSegment, time_sec: float) -> _AnimationState:
         duration = max(segment.note_end_sec - segment.note_start_sec, 1e-6)
         phase = _clamp((time_sec - segment.note_start_sec) / duration)
@@ -474,6 +498,12 @@ class ProjectRenderer:
         jitter = round(math.sin((cycle * 4.5 + seed) * math.tau) * 2.0) / 2.0
         saw = (cycle * 1.35) % 1.0
         burst = math.sin(saw * math.pi)
+        
+        # Calculate attack fade progress
+        attack_fade_duration = max(0.0, self.settings.attack_fade_duration_sec)
+        attack_age_sec = time_sec - segment.note_start_sec
+        attack_ratio = 1.0 if attack_fade_duration <= 0.0 else min(1.0, max(0.0, attack_age_sec / attack_fade_duration))
+        
         return _AnimationState(
             phase=phase,
             wave=wave,
@@ -483,6 +513,7 @@ class ProjectRenderer:
             jitter=jitter,
             burst=burst,
             saw=saw,
+            attack_ratio=attack_ratio,
         )
 
     def _animated_rect(
@@ -556,8 +587,12 @@ class ProjectRenderer:
         if style == "none" or strength <= 0.0:
             return
 
+        # Apply attack fade to glow
+        attack_fade_style = self.settings.attack_fade_style
+        attack_visibility = 1.0 if attack_fade_style == "none" else self._attack_fade_visibility(state.attack_ratio)
+
         height = rect[3] - rect[1]
-        base_alpha = int(165 * _clamp(0.3 + strength))
+        base_alpha = int(165 * _clamp(0.3 + strength) * attack_visibility)
 
         if style == "soft":
             for scale, alpha_scale in ((0.4, 0.55), (0.85, 0.3), (1.25, 0.16)):

@@ -13,6 +13,8 @@ from .midi_loader import load_midi_project
 from .models import (
     AFTERIMAGE_STYLE_CHOICES,
     ANIMATION_STYLE_CHOICES,
+    ATTACK_FADE_CURVE_CHOICES,
+    ATTACK_FADE_STYLE_CHOICES,
     CORNER_STYLE_CHOICES,
     CUSTOM_THEME_NAME,
     DEFAULT_THEME_NAME,
@@ -71,6 +73,10 @@ class MidiVideoApp:
         self._release_fade_label_to_value = {label: value for value, label in RELEASE_FADE_STYLE_CHOICES}
         self._release_curve_value_to_label = {value: label for value, label in RELEASE_FADE_CURVE_CHOICES}
         self._release_curve_label_to_value = {label: value for value, label in RELEASE_FADE_CURVE_CHOICES}
+        self._attack_fade_value_to_label = {value: label for value, label in ATTACK_FADE_STYLE_CHOICES}
+        self._attack_fade_label_to_value = {label: value for value, label in ATTACK_FADE_STYLE_CHOICES}
+        self._attack_curve_value_to_label = {value: label for value, label in ATTACK_FADE_CURVE_CHOICES}
+        self._attack_curve_label_to_value = {label: value for value, label in ATTACK_FADE_CURVE_CHOICES}
         self._theme_names = theme_name_choices()
 
         self.file_label_var = tk.StringVar(value="MIDIファイルが読み込まれていません")
@@ -91,6 +97,12 @@ class MidiVideoApp:
         self.release_fade_curve_var = tk.StringVar(
             value=self._release_curve_value_to_label[self.render_settings.release_fade_curve]
         )
+        self.attack_fade_style_var = tk.StringVar(
+            value=self._attack_fade_value_to_label[self.render_settings.attack_fade_style]
+        )
+        self.attack_fade_curve_var = tk.StringVar(
+            value=self._attack_curve_value_to_label[self.render_settings.attack_fade_curve]
+        )
         self.glow_strength_var = tk.DoubleVar(value=self.render_settings.glow_strength * 100.0)
         self.animation_strength_var = tk.DoubleVar(value=self.render_settings.animation_strength * 100.0)
         self.animation_speed_var = tk.DoubleVar(value=self.render_settings.animation_speed * 100.0)
@@ -105,6 +117,7 @@ class MidiVideoApp:
         self.afterimage_duration_var = tk.DoubleVar(value=self.render_settings.afterimage_duration_sec * 100.0)
         self.afterimage_padding_var = tk.DoubleVar(value=self.render_settings.afterimage_padding_scale * 100.0)
         self.release_fade_duration_var = tk.DoubleVar(value=self.render_settings.release_fade_duration_sec * 100.0)
+        self.attack_fade_duration_var = tk.DoubleVar(value=self.render_settings.attack_fade_duration_sec * 100.0)
         self.glow_strength_text_var = tk.StringVar()
         self.animation_strength_text_var = tk.StringVar()
         self.animation_speed_text_var = tk.StringVar()
@@ -119,6 +132,7 @@ class MidiVideoApp:
         self.afterimage_duration_text_var = tk.StringVar()
         self.afterimage_padding_text_var = tk.StringVar()
         self.release_fade_duration_text_var = tk.StringVar()
+        self.attack_fade_duration_text_var = tk.StringVar()
 
         self._color_labels = {
             "background_color": "背景色",
@@ -454,13 +468,41 @@ class MidiVideoApp:
         self.release_fade_curve_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
         self.release_fade_curve_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
 
+        row += 1
+        ttk.Label(panel, text="フェードイン（攻撃）").grid(row=row, column=0, sticky="w", pady=(12, 0))
+
+        row += 1
+        ttk.Label(panel, text="スタイル").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.attack_fade_style_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in ATTACK_FADE_STYLE_CHOICES],
+            textvariable=self.attack_fade_style_var,
+            width=16,
+        )
+        self.attack_fade_style_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.attack_fade_style_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
+        row += 1
+        ttk.Label(panel, text="フェードカーブ").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.attack_fade_curve_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in ATTACK_FADE_CURVE_CHOICES],
+            textvariable=self.attack_fade_curve_var,
+            width=16,
+        )
+        self.attack_fade_curve_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.attack_fade_curve_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
         for label, variable, text_variable, minimum, maximum in (
             ("発光の強さ", self.glow_strength_var, self.glow_strength_text_var, 0, 150),
             ("アニメの強さ", self.animation_strength_var, self.animation_strength_text_var, 0, 150),
             ("アニメ速度", self.animation_speed_var, self.animation_speed_text_var, 25, 300),
             ("残像の強さ", self.afterimage_strength_var, self.afterimage_strength_text_var, 0, 150),
             ("残像の時間", self.afterimage_duration_var, self.afterimage_duration_text_var, 0, 200),
-            ("フェードの時間", self.release_fade_duration_var, self.release_fade_duration_text_var, 0, 200),
+            ("フェードアウト時間", self.release_fade_duration_var, self.release_fade_duration_text_var, 0, 200),
+            ("フェードイン時間", self.attack_fade_duration_var, self.attack_fade_duration_text_var, 0, 200),
         ):
             row += 1
             self._add_slider_control(
@@ -800,6 +842,8 @@ class MidiVideoApp:
         self.render_settings.afterimage_style = self._afterimage_label_to_value[self.afterimage_style_var.get()]
         self.render_settings.release_fade_style = self._release_fade_label_to_value[self.release_fade_style_var.get()]
         self.render_settings.release_fade_curve = self._release_curve_label_to_value[self.release_fade_curve_var.get()]
+        self.render_settings.attack_fade_style = self._attack_fade_label_to_value[self.attack_fade_style_var.get()]
+        self.render_settings.attack_fade_curve = self._attack_curve_label_to_value[self.attack_fade_curve_var.get()]
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
@@ -824,6 +868,7 @@ class MidiVideoApp:
         self.render_settings.afterimage_duration_sec = round(self.afterimage_duration_var.get() / 100.0, 3)
         self.render_settings.afterimage_padding_scale = round(self.afterimage_padding_var.get() / 100.0, 3)
         self.render_settings.release_fade_duration_sec = round(self.release_fade_duration_var.get() / 100.0, 3)
+        self.render_settings.attack_fade_duration_sec = round(self.attack_fade_duration_var.get() / 100.0, 3)
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
@@ -842,6 +887,8 @@ class MidiVideoApp:
         self.afterimage_style_var.set(self._afterimage_value_to_label[self.render_settings.afterimage_style])
         self.release_fade_style_var.set(self._release_fade_value_to_label[self.render_settings.release_fade_style])
         self.release_fade_curve_var.set(self._release_curve_value_to_label[self.render_settings.release_fade_curve])
+        self.attack_fade_style_var.set(self._attack_fade_value_to_label[self.render_settings.attack_fade_style])
+        self.attack_fade_curve_var.set(self._attack_curve_value_to_label[self.render_settings.attack_fade_curve])
         self.glow_strength_var.set(self.render_settings.glow_strength * 100.0)
         self.animation_strength_var.set(self.render_settings.animation_strength * 100.0)
         self.animation_speed_var.set(self.render_settings.animation_speed * 100.0)
@@ -856,6 +903,7 @@ class MidiVideoApp:
         self.afterimage_duration_var.set(self.render_settings.afterimage_duration_sec * 100.0)
         self.afterimage_padding_var.set(self.render_settings.afterimage_padding_scale * 100.0)
         self.release_fade_duration_var.set(self.render_settings.release_fade_duration_sec * 100.0)
+        self.attack_fade_duration_var.set(self.render_settings.attack_fade_duration_sec * 100.0)
         self._update_slider_labels()
 
         for field_name, label in self._color_swatches.items():
@@ -883,6 +931,7 @@ class MidiVideoApp:
         self.afterimage_duration_text_var.set(f"{self.afterimage_duration_var.get() / 100.0:.2f}秒")
         self.afterimage_padding_text_var.set(f"{self.afterimage_padding_var.get() / 100.0:.2f}x")
         self.release_fade_duration_text_var.set(f"{self.release_fade_duration_var.get() / 100.0:.2f}秒")
+        self.attack_fade_duration_text_var.set(f"{self.attack_fade_duration_var.get() / 100.0:.2f}秒")
 
     def _schedule_playback_tick(self) -> None:
         self._handle_playback_tick()
