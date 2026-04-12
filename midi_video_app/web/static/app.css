@@ -721,6 +721,21 @@ button.primary {
   gap: 8px;
 }
 
+.field.wide {
+  grid-column: 1 / -1;
+}
+
+.slider-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.slider-inline strong {
+  color: rgb(var(--theme-active-rgb));
+}
+
 select,
 input[type="text"],
 input[type="number"],
@@ -763,6 +778,32 @@ input[type="color"] {
 
 .slider-field strong {
   color: rgb(var(--theme-active-rgb));
+}
+
+.toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.toggle-card {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  background: rgb(4 4 4 / 0.35);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  cursor: pointer;
+}
+
+.toggle-card input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: rgb(var(--theme-active-rgb));
 }
 
 .export-box {
@@ -832,7 +873,8 @@ input[type="color"] {
 
   .hero-stats,
   .preset-grid,
-  .field-grid {
+  .field-grid,
+  .toggle-grid {
     grid-template-columns: 1fr;
   }
 

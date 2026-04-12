@@ -35,7 +35,19 @@ class Measure:
 
 
 @dataclass(slots=True)
+class ChordEvent:
+    start_sec: float
+    end_sec: float
+    start_beat: float
+    end_beat: float
+    chord_name: str
+    note_names: tuple[str, ...]
+    active_note_count: int
+
+
+@dataclass(slots=True)
 class RenderSettings:
+    view_mode: str = "performance"
     background_color: str = "#000000"
     idle_note_color: str = "#2f2f2f"
     active_note_color: str = "#ffffff"
@@ -65,6 +77,13 @@ class RenderSettings:
     attack_fade_style: str = "both"
     attack_fade_curve: str = "smooth"
     attack_fade_duration_sec: float = 0.12
+    visible_measure_count: int = 4
+    hide_future_notes: bool = True
+    show_time_overlay: bool = True
+    show_measure_overlay: bool = True
+    show_stats_overlay: bool = True
+    show_chord_overlay: bool = True
+    show_playhead: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +96,11 @@ CORNER_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
     ("square", "四角"),
     ("rounded", "丸角"),
     ("capsule", "カプセル"),
+)
+
+VIEW_MODE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("performance", "演奏ビュー"),
+    ("measure_page", "固定ページ"),
 )
 
 GLOW_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
@@ -359,12 +383,15 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         return settings
 
     choice_sets = {
+        "view_mode": {value for value, _ in VIEW_MODE_CHOICES},
         "corner_style": {value for value, _ in CORNER_STYLE_CHOICES},
         "glow_style": {value for value, _ in GLOW_STYLE_CHOICES},
         "animation_style": {value for value, _ in ANIMATION_STYLE_CHOICES},
         "afterimage_style": {value for value, _ in AFTERIMAGE_STYLE_CHOICES},
         "release_fade_style": {value for value, _ in RELEASE_FADE_STYLE_CHOICES},
         "release_fade_curve": {value for value, _ in RELEASE_FADE_CURVE_CHOICES},
+        "attack_fade_style": {value for value, _ in ATTACK_FADE_STYLE_CHOICES},
+        "attack_fade_curve": {value for value, _ in ATTACK_FADE_CURVE_CHOICES},
     }
     float_ranges = {
         "glow_strength": (0.0, 1.5),
@@ -381,6 +408,18 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "afterimage_duration_sec": (0.0, 2.0),
         "afterimage_padding_scale": (0.0, 3.0),
         "release_fade_duration_sec": (0.0, 2.0),
+        "attack_fade_duration_sec": (0.0, 2.0),
+    }
+    int_ranges = {
+        "visible_measure_count": (1, 8),
+    }
+    bool_fields = {
+        "hide_future_notes",
+        "show_time_overlay",
+        "show_measure_overlay",
+        "show_stats_overlay",
+        "show_chord_overlay",
+        "show_playhead",
     }
 
     for field_name in render_settings_to_dict(settings):
@@ -405,6 +444,20 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
                 continue
             minimum, maximum = float_ranges[field_name]
             setattr(settings, field_name, max(minimum, min(maximum, numeric_value)))
+            continue
+
+        if field_name in int_ranges:
+            try:
+                numeric_value = int(value)
+            except (TypeError, ValueError):
+                continue
+            minimum, maximum = int_ranges[field_name]
+            setattr(settings, field_name, max(minimum, min(maximum, numeric_value)))
+            continue
+
+        if field_name in bool_fields:
+            if isinstance(value, bool):
+                setattr(settings, field_name, value)
 
     return settings
 
@@ -415,6 +468,7 @@ class MidiProject:
     ticks_per_beat: int
     notes: list[NoteEvent]
     measures: list[Measure]
+    chords: list[ChordEvent]
     min_note: int
     max_note: int
     duration_sec: float

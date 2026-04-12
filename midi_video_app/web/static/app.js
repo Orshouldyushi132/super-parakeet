@@ -3,7 +3,7 @@ const boot = window.APP_BOOTSTRAP || {};
 const DEFAULT_EXPORT_FPS = Number(boot.defaultFps) || 120;
 const MAX_EXPORT_FPS = 240;
 const PREVIEW_INPUT_DEBOUNCE_MS = 16;
-const PREVIEW_FRAME_INTERVAL_MS = 24;
+const PREVIEW_FRAME_INTERVAL_MS = 16;
 
 const state = {
   projectId: null,
@@ -42,18 +42,26 @@ const elements = {
   savePresetButton: document.getElementById("savePresetButton"),
   deletePresetButton: document.getElementById("deletePresetButton"),
   themeSelect: document.getElementById("themeSelect"),
+  viewModeSelect: document.getElementById("viewModeSelect"),
   cornerStyleSelect: document.getElementById("cornerStyleSelect"),
   glowStyleSelect: document.getElementById("glowStyleSelect"),
   animationStyleSelect: document.getElementById("animationStyleSelect"),
   afterimageStyleSelect: document.getElementById("afterimageStyleSelect"),
   releaseFadeStyleSelect: document.getElementById("releaseFadeStyleSelect"),
   releaseFadeCurveSelect: document.getElementById("releaseFadeCurveSelect"),
+  hideFutureNotesCheckbox: document.getElementById("hideFutureNotesCheckbox"),
+  showPlayheadCheckbox: document.getElementById("showPlayheadCheckbox"),
+  showTimeOverlayCheckbox: document.getElementById("showTimeOverlayCheckbox"),
+  showMeasureOverlayCheckbox: document.getElementById("showMeasureOverlayCheckbox"),
+  showStatsOverlayCheckbox: document.getElementById("showStatsOverlayCheckbox"),
+  showChordOverlayCheckbox: document.getElementById("showChordOverlayCheckbox"),
   backgroundColorInput: document.getElementById("backgroundColorInput"),
   idleNoteColorInput: document.getElementById("idleNoteColorInput"),
   activeNoteColorInput: document.getElementById("activeNoteColorInput"),
   glowColorInput: document.getElementById("glowColorInput"),
   animationAccentColorInput: document.getElementById("animationAccentColorInput"),
   outlineColorInput: document.getElementById("outlineColorInput"),
+  visibleMeasureCountInput: document.getElementById("visibleMeasureCountInput"),
   noteLengthScaleInput: document.getElementById("noteLengthScaleInput"),
   noteHeightScaleInput: document.getElementById("noteHeightScaleInput"),
   horizontalPaddingInput: document.getElementById("horizontalPaddingInput"),
@@ -68,6 +76,7 @@ const elements = {
   afterimageDurationInput: document.getElementById("afterimageDurationInput"),
   afterimagePaddingInput: document.getElementById("afterimagePaddingInput"),
   releaseFadeDurationInput: document.getElementById("releaseFadeDurationInput"),
+  visibleMeasureCountValue: document.getElementById("visibleMeasureCountValue"),
   noteLengthScaleValue: document.getElementById("noteLengthScaleValue"),
   noteHeightScaleValue: document.getElementById("noteHeightScaleValue"),
   horizontalPaddingValue: document.getElementById("horizontalPaddingValue"),
@@ -92,12 +101,20 @@ const settingBindings = {
   glow_color: elements.glowColorInput,
   animation_accent_color: elements.animationAccentColorInput,
   outline_color: elements.outlineColorInput,
+  view_mode: elements.viewModeSelect,
   corner_style: elements.cornerStyleSelect,
   glow_style: elements.glowStyleSelect,
   animation_style: elements.animationStyleSelect,
   afterimage_style: elements.afterimageStyleSelect,
   release_fade_style: elements.releaseFadeStyleSelect,
   release_fade_curve: elements.releaseFadeCurveSelect,
+  visible_measure_count: elements.visibleMeasureCountInput,
+  hide_future_notes: elements.hideFutureNotesCheckbox,
+  show_time_overlay: elements.showTimeOverlayCheckbox,
+  show_measure_overlay: elements.showMeasureOverlayCheckbox,
+  show_stats_overlay: elements.showStatsOverlayCheckbox,
+  show_chord_overlay: elements.showChordOverlayCheckbox,
+  show_playhead: elements.showPlayheadCheckbox,
   glow_strength: elements.glowStrengthInput,
   animation_strength: elements.animationStrengthInput,
   animation_speed: elements.animationSpeedInput,
@@ -129,6 +146,19 @@ const scaledSettingFields = new Set([
   "afterimage_duration_sec",
   "afterimage_padding_scale",
   "release_fade_duration_sec",
+]);
+
+const integerSettingFields = new Set([
+  "visible_measure_count",
+]);
+
+const booleanSettingFields = new Set([
+  "hide_future_notes",
+  "show_time_overlay",
+  "show_measure_overlay",
+  "show_stats_overlay",
+  "show_chord_overlay",
+  "show_playhead",
 ]);
 
 function escapeHtml(value) {
@@ -203,6 +233,7 @@ function syncThemeAtmosphere(settings) {
 }
 
 function syncSliderLabels() {
+  elements.visibleMeasureCountValue.textContent = `${elements.visibleMeasureCountInput.value}小節`;
   elements.noteLengthScaleValue.textContent = `${elements.noteLengthScaleInput.value}%`;
   elements.noteHeightScaleValue.textContent = `${elements.noteHeightScaleInput.value}%`;
   elements.horizontalPaddingValue.textContent = `${elements.horizontalPaddingInput.value}%`;
@@ -246,6 +277,14 @@ function updatePresetActionState() {
 function applySettings(settings) {
   Object.entries(settingBindings).forEach(([fieldName, element]) => {
     const value = settings[fieldName];
+    if (booleanSettingFields.has(fieldName)) {
+      element.checked = Boolean(value);
+      return;
+    }
+    if (integerSettingFields.has(fieldName)) {
+      element.value = String(Math.round(Number(value)));
+      return;
+    }
     if (scaledSettingFields.has(fieldName)) {
       element.value = Math.round(Number(value) * 100);
       return;
@@ -263,6 +302,12 @@ function applySettings(settings) {
 function collectSettings() {
   return Object.fromEntries(
     Object.entries(settingBindings).map(([fieldName, element]) => {
+      if (booleanSettingFields.has(fieldName)) {
+        return [fieldName, Boolean(element.checked)];
+      }
+      if (integerSettingFields.has(fieldName)) {
+        return [fieldName, Math.round(Number(element.value))];
+      }
       if (scaledSettingFields.has(fieldName)) {
         return [fieldName, Number(element.value) / 100];
       }
@@ -331,7 +376,7 @@ function renderPresetCards() {
       <div class="preset-card-header">
         <div>
           <span class="preset-card-title">${escapeHtml(themeName)}</span>
-          <span class="preset-card-subtitle">${isSaved ? "保存済みプリセット。ブラウザ版とデスクトップ版の両方で呼び出せます。" : "標準プリセット。ここから好みに寄せて保存できます。"}</span>
+          <span class="preset-card-subtitle">${isSaved ? "保存済みプリセット。ブラウザ版とデスクトップ版の両方で使えます。" : "標準プリセット。ここから好みに寄せて保存できます。"}</span>
         </div>
         <div class="preset-card-meta">
           <span class="preset-card-pill ${isSaved ? "user" : "builtin"}">${isSaved ? "保存済み" : "標準"}</span>
@@ -447,7 +492,7 @@ async function uploadMidi(file) {
   const formData = new FormData();
   formData.append("file", file);
 
-  setStatus("MIDI を読み込み中です...");
+  setStatus("MIDI を読み込んでいます...");
   elements.exportButton.disabled = true;
 
   const response = await fetch("/api/projects", { method: "POST", body: formData });
@@ -548,18 +593,6 @@ function queuePreview(immediate = false) {
   }, delay);
 }
 
-function updateMeta() {
-  elements.timelineRange.value = String(state.currentTime);
-  elements.timeText.textContent = `${formatTime(state.currentTime)} / ${formatTime(state.durationSec)}`;
-
-  const measure = getCurrentMeasure();
-  if (!measure) {
-    elements.measureText.textContent = "小節: -";
-    return;
-  }
-  elements.measureText.textContent = `現在小節: ${measure.index + 1} / ${state.measures.length} (${measure.numerator}/${measure.denominator})`;
-}
-
 function getCurrentMeasure() {
   if (!state.measures.length) {
     return null;
@@ -573,6 +606,18 @@ function getCurrentMeasure() {
     break;
   }
   return current;
+}
+
+function updateMeta() {
+  elements.timelineRange.value = String(state.currentTime);
+  elements.timeText.textContent = `${formatTime(state.currentTime)} / ${formatTime(state.durationSec)}`;
+
+  const measure = getCurrentMeasure();
+  if (!measure) {
+    elements.measureText.textContent = "小節: -";
+    return;
+  }
+  elements.measureText.textContent = `現在小節: ${measure.index + 1} / ${state.measures.length} (${measure.numerator}/${measure.denominator})`;
 }
 
 function jumpMeasure(direction) {
@@ -592,14 +637,17 @@ function togglePlayback() {
     setStatus("先に MIDI を読み込んでください。");
     return;
   }
+
   if (state.playing) {
     state.playing = false;
     setStatus("再生を一時停止しました。");
     return;
   }
+
   if (state.currentTime >= state.durationSec) {
     state.currentTime = 0;
   }
+
   state.playing = true;
   state.playbackOriginSec = state.currentTime;
   state.playbackStartedAt = performance.now();
@@ -716,6 +764,7 @@ function installPointerLighting() {
 
 function initialize() {
   populateSelect(elements.themeSelect, boot.choices.themes || [], boot.defaultTheme);
+  populateSelect(elements.viewModeSelect, boot.choices.viewModes || [], boot.defaultSettings.view_mode);
   populateSelect(elements.cornerStyleSelect, boot.choices.corners || [], boot.defaultSettings.corner_style);
   populateSelect(elements.glowStyleSelect, boot.choices.glows || [], boot.defaultSettings.glow_style);
   populateSelect(elements.animationStyleSelect, boot.choices.animations || [], boot.defaultSettings.animation_style);
@@ -744,13 +793,8 @@ function initialize() {
     queuePreview(true);
   });
 
-  elements.savePresetButton.addEventListener("click", () => {
-    saveCurrentPreset();
-  });
-
-  elements.deletePresetButton.addEventListener("click", () => {
-    deleteSelectedPreset();
-  });
+  elements.savePresetButton.addEventListener("click", saveCurrentPreset);
+  elements.deletePresetButton.addEventListener("click", deleteSelectedPreset);
 
   elements.fileInput.addEventListener("change", async (event) => {
     const [file] = event.target.files || [];
@@ -766,6 +810,7 @@ function initialize() {
   });
 
   [
+    elements.viewModeSelect,
     elements.cornerStyleSelect,
     elements.glowStyleSelect,
     elements.animationStyleSelect,
@@ -783,6 +828,7 @@ function initialize() {
   });
 
   [
+    elements.visibleMeasureCountInput,
     elements.noteLengthScaleInput,
     elements.noteHeightScaleInput,
     elements.horizontalPaddingInput,
@@ -802,6 +848,17 @@ function initialize() {
       syncSliderLabels();
       handleManualStyleChange();
     });
+  });
+
+  [
+    elements.hideFutureNotesCheckbox,
+    elements.showPlayheadCheckbox,
+    elements.showTimeOverlayCheckbox,
+    elements.showMeasureOverlayCheckbox,
+    elements.showStatsOverlayCheckbox,
+    elements.showChordOverlayCheckbox,
+  ].forEach((element) => {
+    element.addEventListener("input", handleManualStyleChange);
   });
 
   elements.timelineRange.addEventListener("input", () => {

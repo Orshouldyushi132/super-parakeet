@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MIDI小節切り替え動画ツール</title>
+  <title>MIDI演出動画メーカー</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 <body>
@@ -20,19 +20,25 @@
           <span class="hero-title-top">MIDI Motion</span>
           <span class="hero-title-bottom">Scene Studio</span>
         </h1>
-        <p class="hero-copy">Mac とスマホでも使えるブラウザ版です。MIDI を読み込むと、1小節ごとの固定表示をつないだ動画をそのまま書き出せます。背景の空気感、ガラス感、光の余韻まで含めて触れるようにしました。</p>
+        <p class="hero-copy">
+          Mac やスマホでも使えるブラウザ版です。MIDI を読み込んで、演奏ビューや固定ページ表示を切り替えながら、
+          時間・拍・小節・コード表示つきの動画を作れます。
+        </p>
         <div class="hero-tags">
-          <span class="tag">Aurora Glow</span>
-          <span class="tag">Glass Panels</span>
-          <span class="tag">Motion Presets</span>
-          <span class="tag">Measure Sync</span>
+          <span class="tag">Performance View</span>
+          <span class="tag">Chord Overlay</span>
+          <span class="tag">120 FPS Export</span>
+          <span class="tag">Preset Sync</span>
         </div>
       </div>
 
       <div class="hero-side">
         <div class="hero-note">
           <p class="hero-note-title">スマホから開く</p>
-          <p>同じWi-FiにあるPCで <code>python web_main.py --host 0.0.0.0 --port 8000</code> を実行し、スマホのブラウザで PC の IP アドレスを開いてください。</p>
+          <p>
+            同じ Wi-Fi の PC で <code>python web_main.py --host 0.0.0.0 --port 8000</code> を実行し、
+            スマホのブラウザから PC の IP アドレスを開いてください。
+          </p>
         </div>
 
         <div class="hero-stats">
@@ -41,8 +47,8 @@
             <strong>1920×1080</strong>
           </div>
           <div class="hero-stat">
-            <span>プレビュー</span>
-            <strong>ライブ更新</strong>
+            <span>既定FPS</span>
+            <strong>120 FPS</strong>
           </div>
           <div class="hero-stat">
             <span>対応</span>
@@ -60,7 +66,7 @@
               <span>MIDIを選ぶ</span>
               <input id="midiFileInput" type="file" accept=".mid,.midi">
             </label>
-            <button id="exportButton" class="primary" type="button">MP4を書き出す</button>
+            <button id="exportButton" class="primary" type="button">MP4を書き出し</button>
           </div>
 
           <div class="meta-row">
@@ -79,7 +85,7 @@
           <div class="preview-shell">
             <div class="preview-header">
               <span class="hud-label">Live Preview</span>
-              <span id="themeBadge" class="theme-badge">モノクロフラッシュ</span>
+              <span id="themeBadge" class="theme-badge">モノクロフレーム</span>
             </div>
 
             <div id="previewFrame" class="preview-frame">
@@ -111,35 +117,60 @@
         <section class="panel preset-panel reveal">
           <div class="settings-header">
             <h2>スタイルプリセット</h2>
-            <p>最近のデザイン事例をヒントに、空気感が違う見た目をすぐ試せるようにしました。</p>
+            <p>今の見た目を保存して、デスクトップ版とブラウザ版の両方で使えます。</p>
           </div>
           <div id="themePresetGrid" class="preset-grid"></div>
           <div class="preset-actions">
             <label class="field">
-              <span>保存プリセット名</span>
-              <input id="presetNameInput" type="text" placeholder="例: しろふわアウトライン">
+              <span>保存するプリセット名</span>
+              <input id="presetNameInput" type="text" placeholder="例: 白枠ライブ">
             </label>
             <div class="preset-action-row">
-              <button id="savePresetButton" class="primary" type="button">現在設定を保存</button>
-              <button id="deletePresetButton" type="button">選択プリセットを削除</button>
+              <button id="savePresetButton" class="primary" type="button">現在の設定を保存</button>
+              <button id="deletePresetButton" type="button">選択中プリセットを削除</button>
             </div>
-            <p class="preset-helper">保存したプリセットはブラウザ版とデスクトップ版の両方から呼び出せます。</p>
+            <p class="preset-helper">保存済みプリセットはブラウザ版とデスクトップ版で共有されます。</p>
           </div>
         </section>
 
         <aside class="panel settings-panel reveal">
           <div class="settings-header">
             <h2>見た目設定</h2>
-            <p>テーマから始めて、色、光、残像、アニメーションを細かく詰められます。</p>
+            <p>表示方式、表示小節数、オーバーレイ、色、発光、残像、枠アニメーションを細かく調整できます。</p>
           </div>
 
           <section class="settings-block">
-            <h3 class="subsection-title">基本</h3>
+            <h3 class="subsection-title">表示</h3>
             <div class="field-grid">
+              <label class="field">
+                <span>表示方式</span>
+                <select id="viewModeSelect"></select>
+              </label>
               <label class="field">
                 <span>テーマ</span>
                 <select id="themeSelect"></select>
               </label>
+              <label class="field wide">
+                <span>表示小節数</span>
+                <div class="slider-inline">
+                  <input id="visibleMeasureCountInput" type="range" min="1" max="8" step="1">
+                  <strong id="visibleMeasureCountValue">4小節</strong>
+                </div>
+              </label>
+            </div>
+            <div class="toggle-grid">
+              <label class="toggle-card"><input id="hideFutureNotesCheckbox" type="checkbox"><span>未再生ノーツを隠す</span></label>
+              <label class="toggle-card"><input id="showPlayheadCheckbox" type="checkbox"><span>再生バー</span></label>
+              <label class="toggle-card"><input id="showTimeOverlayCheckbox" type="checkbox"><span>時間と拍表示</span></label>
+              <label class="toggle-card"><input id="showMeasureOverlayCheckbox" type="checkbox"><span>小節ガイド</span></label>
+              <label class="toggle-card"><input id="showStatsOverlayCheckbox" type="checkbox"><span>統計表示</span></label>
+              <label class="toggle-card"><input id="showChordOverlayCheckbox" type="checkbox"><span>コード表示</span></label>
+            </div>
+          </section>
+
+          <section class="settings-block">
+            <h3 class="subsection-title">基本</h3>
+            <div class="field-grid">
               <label class="field">
                 <span>角の形</span>
                 <select id="cornerStyleSelect"></select>
@@ -183,7 +214,7 @@
                 <input id="activeNoteColorInput" type="color">
               </label>
               <label class="field">
-                <span>発光色</span>
+                <span>光色</span>
                 <input id="glowColorInput" type="color">
               </label>
               <label class="field">
@@ -191,14 +222,14 @@
                 <input id="animationAccentColorInput" type="color">
               </label>
               <label class="field">
-                <span>輪郭色</span>
+                <span>枠色</span>
                 <input id="outlineColorInput" type="color">
               </label>
             </div>
           </section>
 
           <section class="settings-block">
-            <h3 class="subsection-title">ノーツ寸法</h3>
+            <h3 class="subsection-title">ノーツサイズ</h3>
             <div class="slider-list">
               <label class="slider-field">
                 <span>ノーツの長さ</span>
@@ -211,12 +242,12 @@
                 <strong id="noteHeightScaleValue">100%</strong>
               </label>
               <label class="slider-field">
-                <span>左右の余白</span>
+                <span>横方向の余白</span>
                 <input id="horizontalPaddingInput" type="range" min="0" max="18" step="1">
                 <strong id="horizontalPaddingValue">0%</strong>
               </label>
               <label class="slider-field">
-                <span>上下の余白</span>
+                <span>縦方向の余白</span>
                 <input id="verticalPaddingInput" type="range" min="0" max="20" step="1">
                 <strong id="verticalPaddingValue">0%</strong>
               </label>
@@ -227,7 +258,7 @@
             <h3 class="subsection-title">演出</h3>
             <div class="slider-list">
               <label class="slider-field">
-                <span>発光の強さ</span>
+                <span>光の強さ</span>
                 <input id="glowStrengthInput" type="range" min="0" max="150" step="1">
                 <strong id="glowStrengthValue">0%</strong>
               </label>
@@ -252,7 +283,7 @@
                 <strong id="afterimageDurationValue">0.00秒</strong>
               </label>
               <label class="slider-field">
-                <span>フェードの時間</span>
+                <span>フェード時間</span>
                 <input id="releaseFadeDurationInput" type="range" min="0" max="200" step="1">
                 <strong id="releaseFadeDurationValue">0.00秒</strong>
               </label>
@@ -260,7 +291,7 @@
           </section>
 
           <section class="settings-block">
-            <h3 class="subsection-title">詳細</h3>
+            <h3 class="subsection-title">枠</h3>
             <div class="slider-list">
               <label class="slider-field">
                 <span>通常ノーツ枠</span>
@@ -278,7 +309,7 @@
                 <strong id="afterimageOutlineWidthValue">1.00x</strong>
               </label>
               <label class="slider-field">
-                <span>残像フレームの広さ</span>
+                <span>残像フレームの広がり</span>
                 <input id="afterimagePaddingInput" type="range" min="0" max="300" step="1">
                 <strong id="afterimagePaddingValue">1.00x</strong>
               </label>
@@ -290,7 +321,7 @@
               <span>FPS</span>
               <input id="fpsInput" type="number" min="1" max="240" value="120">
             </label>
-            <p>初期値は 120FPS です。プレビュー側も更新間隔を詰めて、見た目の確認をしやすくしています。</p>
+            <p>初期値は 120FPS です。必要に応じて変更できます。</p>
           </div>
         </aside>
       </div>

@@ -8,7 +8,7 @@ from typing import DefaultDict
 
 import mido
 
-from .models import Measure, MidiProject, NoteEvent
+from .models import ChordEvent, Measure, MidiProject, NoteEvent
 
 
 @dataclass(slots=True)
@@ -153,12 +153,14 @@ def load_midi_project(path: str | Path) -> MidiProject:
         time_signature_changes=time_signature_changes,
         song_end_beat=max(note.end_beat for note in notes),
     )
+    chords = _build_chord_events(notes)
 
     return MidiProject(
         source_path=midi_path,
         ticks_per_beat=midi.ticks_per_beat,
         notes=notes,
         measures=measures,
+        chords=chords,
         min_note=min(note.note for note in notes),
         max_note=max(note.note for note in notes),
         duration_sec=measures[-1].end_sec,
@@ -210,3 +212,144 @@ def _build_measures(
         current_beat = next_beat
 
     return measures
+
+
+def _build_chord_events(notes: list[NoteEvent]) -> list[ChordEvent]:
+    if not notes:
+        return []
+
+    epsilon = 1e-9
+    indexed_notes = list(enumerate(notes))
+    events = sorted(
+        [
+            (note.start_sec, note.start_beat, 1, index)
+            for index, note in indexed_notes
+        ]
+        + [
+            (note.end_sec, note.end_beat, -1, index)
+            for index, note in indexed_notes
+        ],
+        key=lambda item: (item[0], item[2]),
+    )
+
+    grouped_events: list[tuple[float, float, list[int], list[int]]] = []
+    cursor = 0
+    while cursor < len(events):
+        sec, beat, _, _ = events[cursor]
+        starts: list[int] = []
+        ends: list[int] = []
+        while cursor < len(events) and abs(events[cursor][0] - sec) <= epsilon:
+            _, event_beat, direction, note_index = events[cursor]
+            beat = min(beat, event_beat)
+            if direction < 0:
+                ends.append(note_index)
+            else:
+                starts.append(note_index)
+            cursor += 1
+        grouped_events.append((sec, beat, starts, ends))
+
+    active_note_indices: set[int] = set()
+    chord_events: list[ChordEvent] = []
+    for group_index, (sec, beat, starts, ends) in enumerate(grouped_events):
+        for note_index in ends:
+            active_note_indices.discard(note_index)
+        for note_index in starts:
+            active_note_indices.add(note_index)
+
+        if group_index + 1 >= len(grouped_events):
+            continue
+
+        next_sec, next_beat, _, _ = grouped_events[group_index + 1]
+        if next_sec <= sec + epsilon or not active_note_indices:
+            continue
+
+        active_pitches = sorted({notes[note_index].note for note_index in active_note_indices})
+        chord_name, note_names = _detect_chord(active_pitches)
+        if not chord_name:
+            continue
+
+        if chord_events and chord_events[-1].chord_name == chord_name and chord_events[-1].note_names == note_names:
+            chord_events[-1].end_sec = next_sec
+            chord_events[-1].end_beat = next_beat
+            chord_events[-1].active_note_count = len(active_pitches)
+            continue
+
+        chord_events.append(
+            ChordEvent(
+                start_sec=sec,
+                end_sec=next_sec,
+                start_beat=beat,
+                end_beat=next_beat,
+                chord_name=chord_name,
+                note_names=note_names,
+                active_note_count=len(active_pitches),
+            )
+        )
+
+    return chord_events
+
+
+def _detect_chord(active_pitches: list[int]) -> tuple[str, tuple[str, ...]]:
+    if not active_pitches:
+        return "", ()
+
+    unique_pitches = sorted(dict.fromkeys(active_pitches))
+    note_names = tuple(_midi_note_name(pitch) for pitch in unique_pitches)
+    pitch_classes = sorted({pitch % 12 for pitch in unique_pitches})
+    bass_pc = unique_pitches[0] % 12
+
+    if len(pitch_classes) == 1:
+        return _pitch_class_name(bass_pc), note_names
+
+    chord_patterns = (
+        ("maj7", {0, 4, 7, 11}),
+        ("m7", {0, 3, 7, 10}),
+        ("7", {0, 4, 7, 10}),
+        ("mMaj7", {0, 3, 7, 11}),
+        ("dim7", {0, 3, 6, 9}),
+        ("m7b5", {0, 3, 6, 10}),
+        ("6", {0, 4, 7, 9}),
+        ("m6", {0, 3, 7, 9}),
+        ("add9", {0, 2, 4, 7}),
+        ("madd9", {0, 2, 3, 7}),
+        ("sus2", {0, 2, 7}),
+        ("sus4", {0, 5, 7}),
+        ("aug", {0, 4, 8}),
+        ("dim", {0, 3, 6}),
+        ("m", {0, 3, 7}),
+        ("", {0, 4, 7}),
+        ("5", {0, 7}),
+    )
+
+    best_score = float("-inf")
+    best_name = ""
+    for root_pc in pitch_classes:
+        intervals = {(pitch_class - root_pc) % 12 for pitch_class in pitch_classes}
+        for suffix, pattern in chord_patterns:
+            if not pattern.issubset(intervals):
+                continue
+            extras = len(intervals - pattern)
+            bass_bonus = 3 if bass_pc == root_pc else 0
+            score = len(pattern) * 12 - extras * 4 + bass_bonus
+            if score <= best_score:
+                continue
+
+            chord_name = f"{_pitch_class_name(root_pc)}{suffix}"
+            if bass_pc != root_pc:
+                chord_name = f"{chord_name}/{_pitch_class_name(bass_pc)}"
+            best_score = score
+            best_name = chord_name
+
+    if best_name:
+        return best_name, note_names
+    return "N.C.", note_names
+
+
+def _pitch_class_name(pitch_class: int) -> str:
+    names = ("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
+    return names[pitch_class % 12]
+
+
+def _midi_note_name(note_number: int) -> str:
+    octave = note_number // 12 - 1
+    return f"{_pitch_class_name(note_number)}{octave}"

@@ -17,8 +17,12 @@ except ImportError:  # pragma: no cover - optional dependency
 @dataclass(slots=True)
 class _VisibleSegment:
     note: int
+    segment_start_beat: float
+    segment_end_beat: float
     start_ratio: float
     end_ratio: float
+    note_start_beat: float
+    note_end_beat: float
     note_start_sec: float
     note_end_sec: float
 
@@ -125,7 +129,10 @@ class ProjectRenderer:
         self.project = project
         self.settings = settings or RenderSettings()
         self._measure_start_seconds = [measure.start_sec for measure in project.measures]
+        self._measure_start_beats = [measure.start_beat for measure in project.measures]
         self._measure_segments = self._build_measure_segments(project)
+        self._note_start_seconds = [note.start_sec for note in project.notes]
+        self._chord_start_seconds = [chord.start_sec for chord in project.chords]
         self._measure_render_cache: dict[
             tuple[int, int, int, tuple[object, ...]],
             tuple[Image.Image, tuple[_PreparedSegment, ...]],
@@ -146,8 +153,13 @@ class ProjectRenderer:
         return self.project.measures[index]
 
     def render_frame(self, time_sec: float, width: int, height: int) -> Image.Image:
-        settings = self.settings
         clamped_time = max(0.0, min(time_sec, max(self.project.duration_sec - 1e-6, 0.0)))
+        if self.settings.view_mode == "performance":
+            return self._render_performance_frame(clamped_time, width, height)
+        return self._render_measure_page_frame(clamped_time, width, height)
+
+    def _render_measure_page_frame(self, clamped_time: float, width: int, height: int) -> Image.Image:
+        settings = self.settings
         measure = self.get_measure_for_time(clamped_time)
         image, prepared_segments = self._get_prepared_measure(measure, width, height)
         image = image.copy()
@@ -232,6 +244,430 @@ class ProjectRenderer:
 
         draw.flush()
         return image.convert("RGB")
+
+    def _render_performance_frame(self, clamped_time: float, width: int, height: int) -> Image.Image:
+        image = Image.new("RGBA", (width, height), _with_alpha(self.settings.background_color, 255))
+        draw = _LayerContext(image)
+        glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        glow_draw = _LayerContext(glow_layer)
+        crisp_glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        crisp_glow_draw = _LayerContext(crisp_glow_layer)
+
+        start_measure_index, visible_measure_count = self._performance_window(clamped_time)
+        visible_measures = self.project.measures[start_measure_index : start_measure_index + visible_measure_count]
+        current_measure = self.get_measure_for_time(clamped_time)
+
+        horizontal_padding = width * max(0.025, self.settings.horizontal_padding_ratio * 0.55)
+        vertical_padding = height * max(0.04, self.settings.vertical_padding_ratio * 0.5)
+        top_overlay_height = 118 if self.settings.show_time_overlay or self.settings.show_stats_overlay else 50
+        bottom_overlay_height = 112 if self.settings.show_chord_overlay else 42
+        left_padding = horizontal_padding
+        right_padding = horizontal_padding
+        top_padding = vertical_padding + top_overlay_height
+        bottom_padding = vertical_padding + bottom_overlay_height
+        plot_width = max(1.0, width - left_padding - right_padding)
+        plot_height = max(1.0, height - top_padding - bottom_padding)
+        measure_width = plot_width / max(1, visible_measure_count)
+
+        visible_notes = self._performance_note_range(start_measure_index, visible_measure_count, clamped_time)
+        min_note, max_note = visible_notes
+        note_range = max(1, max_note - min_note + 1)
+        lane_height = plot_height / note_range
+        rectangle_height = max(2.0, lane_height * 0.56)
+        min_rectangle_width = max(2.0, width * 0.0012)
+
+        if self.settings.show_measure_overlay:
+            self._draw_performance_grid(
+                draw,
+                visible_measures,
+                left_padding,
+                top_padding,
+                measure_width,
+                plot_height,
+                current_measure,
+            )
+
+        active_items: list[_ActiveRenderItem] = []
+        release_items: list[_ReleaseRenderItem] = []
+        trail_items: list[_TrailRenderItem] = []
+        burst_items: list[tuple[float, float, float]] = []
+        trail_window_sec = self._afterimage_window_sec()
+        afterimage_enabled = (
+            self._resolved_afterimage_style() != "none"
+            and trail_window_sec > 0.0
+            and self.settings.afterimage_strength > 0.0
+        )
+        release_window_sec = self._release_fade_window_sec()
+        release_enabled = self.settings.release_fade_style != "none" and release_window_sec > 0.0
+
+        for slot_index, measure in enumerate(visible_measures):
+            measure_x0 = left_padding + slot_index * measure_width
+            measure_x1 = measure_x0 + measure_width
+            for segment in self._measure_segments[measure.index]:
+                clipped_end_beat = self._segment_visible_end_beat(segment, clamped_time)
+                if clipped_end_beat <= segment.segment_start_beat + 1e-9:
+                    continue
+
+                x0 = measure_x0 + measure_width * (
+                    (segment.segment_start_beat - measure.start_beat) / max(measure.length_beats, 1e-9)
+                )
+                x1 = measure_x0 + measure_width * (
+                    (clipped_end_beat - measure.start_beat) / max(measure.length_beats, 1e-9)
+                )
+                if x1 - x0 < min_rectangle_width:
+                    x1 = x0 + min_rectangle_width
+                if x0 >= measure_x1 + 1e-6 or x1 <= measure_x0 - 1e-6:
+                    continue
+
+                pitch_index = max_note - segment.note
+                lane_top = top_padding + pitch_index * lane_height
+                y0 = lane_top + (lane_height - rectangle_height) / 2.0
+                y1 = y0 + rectangle_height
+                rect = self._scaled_note_rect((x0, y0, x1, y1), min_rectangle_width)
+
+                is_active = segment.note_start_sec <= clamped_time < segment.note_end_sec
+                if is_active:
+                    state = self._build_animation_state(segment, clamped_time)
+                    animated_rect = self._animated_rect(rect, state)
+                    active_items.append(_ActiveRenderItem(base_rect=rect, frame_rect=animated_rect, state=state))
+                    if afterimage_enabled:
+                        trail_items.append(
+                            _TrailRenderItem(
+                                base_rect=rect,
+                                frame_rect=animated_rect,
+                                age_ratio=0.0,
+                                is_active=True,
+                                state=state,
+                            )
+                        )
+                    self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, self._rect_radius(animated_rect), state)
+
+                    attack_window = max(0.04, self.settings.attack_fade_duration_sec)
+                    attack_age = clamped_time - segment.note_start_sec
+                    if 0.0 <= attack_age <= attack_window:
+                        burst_items.append(
+                            (
+                                rect[0],
+                                (rect[1] + rect[3]) / 2.0,
+                                1.0 - attack_age / attack_window,
+                            )
+                        )
+                else:
+                    self._draw_performance_idle_segment(draw, rect, is_finished=segment.note_end_sec <= clamped_time)
+                    note_age_sec = clamped_time - segment.note_end_sec
+                    if release_enabled and 0.0 <= note_age_sec <= release_window_sec:
+                        release_state = self._build_animation_state(
+                            segment,
+                            max(segment.note_start_sec, segment.note_end_sec - 1e-4),
+                        )
+                        release_items.append(
+                            _ReleaseRenderItem(
+                                base_rect=rect,
+                                frame_rect=self._animated_rect(rect, release_state),
+                                age_ratio=_clamp(note_age_sec / max(release_window_sec, 1e-6)),
+                                state=release_state,
+                            )
+                        )
+                    if afterimage_enabled and 0.0 <= note_age_sec <= trail_window_sec:
+                        trail_items.append(
+                            _TrailRenderItem(
+                                base_rect=rect,
+                                frame_rect=rect,
+                                age_ratio=_clamp(note_age_sec / max(trail_window_sec, 1e-6)),
+                                is_active=False,
+                            )
+                        )
+
+        glow_draw.flush()
+        crisp_glow_draw.flush()
+        glow_layer = self._finalize_glow_layer(glow_layer, width, height)
+        image.alpha_composite(glow_layer)
+        image.alpha_composite(crisp_glow_layer)
+
+        for item in sorted((trail for trail in trail_items if not trail.is_active), key=lambda trail: trail.age_ratio, reverse=True):
+            self._draw_afterimage(draw, item)
+        for item in trail_items:
+            if item.is_active:
+                self._draw_afterimage(draw, item)
+        for item in sorted(release_items, key=lambda release: release.age_ratio, reverse=True):
+            self._draw_release_fade(draw, item)
+        for item in active_items:
+            self._draw_active_segment(draw, item.base_rect, item.frame_rect, item.state)
+        for burst_x, burst_y, burst_strength in burst_items:
+            self._draw_contact_burst(draw, burst_x, burst_y, lane_height, burst_strength)
+
+        if self.settings.show_playhead:
+            self._draw_playhead(draw, clamped_time, visible_measures, left_padding, top_padding, measure_width, plot_height)
+        self._draw_performance_overlays(
+            draw,
+            clamped_time,
+            current_measure,
+            visible_measures,
+            left_padding,
+            vertical_padding,
+            width,
+            height,
+            top_overlay_height,
+            bottom_overlay_height,
+        )
+
+        draw.flush()
+        return image.convert("RGB")
+
+    def _performance_window(self, time_sec: float) -> tuple[int, int]:
+        visible_measure_count = max(1, min(len(self.project.measures), int(self.settings.visible_measure_count)))
+        current_measure = self.get_measure_for_time(time_sec)
+        start_index = max(0, current_measure.index - (visible_measure_count - 1))
+        max_start = max(0, len(self.project.measures) - visible_measure_count)
+        start_index = min(start_index, max_start)
+        return start_index, visible_measure_count
+
+    def _performance_note_range(self, start_measure_index: int, visible_measure_count: int, time_sec: float) -> tuple[int, int]:
+        notes_in_window: list[int] = []
+        for measure_index in range(start_measure_index, start_measure_index + visible_measure_count):
+            for segment in self._measure_segments[measure_index]:
+                if self.settings.hide_future_notes and segment.note_start_sec > time_sec:
+                    continue
+                if segment.note_end_sec < time_sec - max(self._afterimage_window_sec(), self._release_fade_window_sec(), 1.0):
+                    continue
+                notes_in_window.append(segment.note)
+
+        if not notes_in_window:
+            return self.project.min_note, self.project.max_note
+
+        min_note = min(notes_in_window)
+        max_note = max(notes_in_window)
+        if min_note == max_note:
+            min_note = max(self.project.min_note, min_note - 2)
+            max_note = min(self.project.max_note, max_note + 2)
+        return min_note, max_note
+
+    def _segment_visible_end_beat(self, segment: _VisibleSegment, time_sec: float) -> float:
+        if self.settings.hide_future_notes and time_sec < segment.note_start_sec:
+            return segment.segment_start_beat
+        if not self.settings.hide_future_notes and time_sec < segment.note_start_sec:
+            return segment.segment_end_beat
+
+        if time_sec >= segment.note_end_sec:
+            return segment.segment_end_beat
+
+        reveal_duration = max(0.02, self.settings.attack_fade_duration_sec)
+        reveal_ratio = _clamp((time_sec - segment.note_start_sec) / reveal_duration)
+        reveal_frontier = _lerp(segment.note_start_beat, segment.note_end_beat, reveal_ratio)
+        return min(segment.segment_end_beat, max(segment.segment_start_beat, reveal_frontier))
+
+    def _draw_performance_idle_segment(
+        self,
+        draw: _LayerContext,
+        rect: tuple[float, float, float, float],
+        is_finished: bool,
+    ) -> None:
+        radius = self._rect_radius(rect)
+        outline_width = self._outline_width(rect, 0.11, max(0.65, self.settings.active_outline_width))
+        outline_color = self.settings.outline_color if is_finished else self.settings.idle_note_color
+        outline_alpha = 160 if is_finished else 92
+        fill_alpha = 10 if is_finished else 0
+        if fill_alpha > 0:
+            draw.rounded_rectangle(rect, radius=radius, fill=_with_alpha(self.settings.idle_note_color, fill_alpha))
+        draw.rounded_rectangle(
+            rect,
+            radius=radius,
+            outline=_with_alpha(outline_color, outline_alpha),
+            width=outline_width,
+        )
+
+    def _draw_performance_grid(
+        self,
+        draw: _LayerContext,
+        visible_measures: list[Measure],
+        left_padding: float,
+        top_padding: float,
+        measure_width: float,
+        plot_height: float,
+        current_measure: Measure,
+    ) -> None:
+        for slot_index, measure in enumerate(visible_measures):
+            measure_x0 = left_padding + slot_index * measure_width
+            measure_x1 = measure_x0 + measure_width
+            boundary_alpha = 150 if measure.index == current_measure.index else 86
+            draw.line(
+                (measure_x0, top_padding, measure_x0, top_padding + plot_height),
+                fill=_with_alpha(self.settings.outline_color, boundary_alpha),
+                width=1,
+            )
+            for beat_index in range(1, measure.numerator):
+                beat_ratio = beat_index / max(1, measure.numerator)
+                beat_x = _lerp(measure_x0, measure_x1, beat_ratio)
+                draw.line(
+                    (beat_x, top_padding, beat_x, top_padding + plot_height),
+                    fill=_with_alpha(self.settings.idle_note_color, 44),
+                    width=1,
+                )
+            draw.draw.text(
+                (measure_x0 + 4, top_padding - 22),
+                f"{measure.index + 1:03d}",
+                fill=_with_alpha(self.settings.outline_color, 188),
+            )
+        draw.line(
+            (left_padding + len(visible_measures) * measure_width, top_padding, left_padding + len(visible_measures) * measure_width, top_padding + plot_height),
+            fill=_with_alpha(self.settings.outline_color, 86),
+            width=1,
+        )
+
+    def _draw_playhead(
+        self,
+        draw: _LayerContext,
+        time_sec: float,
+        visible_measures: list[Measure],
+        left_padding: float,
+        top_padding: float,
+        measure_width: float,
+        plot_height: float,
+    ) -> None:
+        current_measure = self.get_measure_for_time(time_sec)
+        try:
+            slot_index = next(index for index, measure in enumerate(visible_measures) if measure.index == current_measure.index)
+        except StopIteration:
+            return
+
+        beat_ratio = (self._current_beat_in_measure(current_measure, time_sec) - 1.0) / max(current_measure.numerator, 1)
+        playhead_x = left_padding + slot_index * measure_width + measure_width * _clamp(beat_ratio)
+        playhead_color = _with_alpha(self.settings.animation_accent_color, 225)
+        draw.line((playhead_x, top_padding - 30, playhead_x, top_padding + plot_height + 26), fill=playhead_color, width=2)
+
+    def _draw_contact_burst(
+        self,
+        draw: _LayerContext,
+        burst_x: float,
+        burst_y: float,
+        lane_height: float,
+        burst_strength: float,
+    ) -> None:
+        if burst_strength <= 0.0:
+            return
+        radius = max(4.0, lane_height * (0.38 + 0.42 * burst_strength))
+        alpha = int(110 * burst_strength)
+        draw.line(
+            (burst_x - radius, burst_y, burst_x + radius, burst_y),
+            fill=_with_alpha(self.settings.outline_color, alpha),
+            width=max(1, int(lane_height * 0.08)),
+        )
+        draw.line(
+            (burst_x, burst_y - radius * 0.75, burst_x, burst_y + radius * 0.75),
+            fill=_with_alpha(self.settings.animation_accent_color, alpha),
+            width=max(1, int(lane_height * 0.06)),
+        )
+
+    def _draw_performance_overlays(
+        self,
+        draw: _LayerContext,
+        time_sec: float,
+        current_measure: Measure,
+        visible_measures: list[Measure],
+        left_padding: float,
+        vertical_padding: float,
+        width: int,
+        height: int,
+        top_overlay_height: float,
+        bottom_overlay_height: float,
+    ) -> None:
+        current_beat = self._current_beat_in_measure(current_measure, time_sec)
+        beat_index = int(max(0.0, current_beat - 1e-6)) + 1
+        beat_fraction = current_beat - int(current_beat)
+        top_left_x = left_padding
+        top_y = vertical_padding
+
+        if self.settings.show_time_overlay:
+            draw.draw.text(
+                (top_left_x, top_y),
+                f"BAR\n{current_measure.index + 1:03d}",
+                fill=_with_alpha(self.settings.outline_color, 235),
+                spacing=4,
+            )
+            draw.draw.text(
+                (top_left_x + 84, top_y),
+                f"BEAT\n{beat_index:02d} {int(beat_fraction * 1000):03d}",
+                fill=_with_alpha(self.settings.outline_color, 235),
+                spacing=4,
+            )
+            draw.draw.text(
+                (top_left_x + 194, top_y),
+                f"TIME\n{self._format_clock(time_sec)}",
+                fill=_with_alpha(self.settings.outline_color, 235),
+                spacing=4,
+            )
+            self._draw_beat_pips(draw, current_measure, beat_index, top_left_x + 84, top_y + 64)
+
+        if self.settings.show_stats_overlay:
+            played_notes = bisect_right(self._note_start_seconds, time_sec + 1e-9)
+            total_notes = max(1, len(self.project.notes))
+            active_chord = self.get_chord_for_time(time_sec)
+            active_note_count = active_chord.active_note_count if active_chord else 0
+            stats_text = (
+                f"Played notes: {played_notes}/{total_notes} ({played_notes / total_notes:.1%})\n"
+                f"Active notes: {active_note_count}"
+            )
+            text_bbox = draw.draw.multiline_textbbox((0, 0), stats_text, spacing=4)
+            text_x = width - left_padding - (text_bbox[2] - text_bbox[0])
+            draw.draw.multiline_text(
+                (text_x, top_y),
+                stats_text,
+                fill=_with_alpha(self.settings.outline_color, 215),
+                spacing=4,
+            )
+
+        if self.settings.show_measure_overlay and visible_measures:
+            footer_text = f"Measures visible: {len(visible_measures)}"
+            draw.draw.text(
+                (left_padding, height - bottom_overlay_height + 22),
+                footer_text,
+                fill=_with_alpha(self.settings.idle_note_color, 170),
+            )
+
+        if self.settings.show_chord_overlay:
+            chord = self.get_chord_for_time(time_sec)
+            if chord is not None:
+                chord_text = chord.chord_name
+                notes_text = "Notes: " + " ".join(chord.note_names)
+                chord_bbox = draw.draw.textbbox((0, 0), chord_text)
+                notes_bbox = draw.draw.textbbox((0, 0), notes_text)
+                chord_x = width - left_padding - (chord_bbox[2] - chord_bbox[0])
+                chord_y = height - bottom_overlay_height + 10
+                notes_x = width - left_padding - (notes_bbox[2] - notes_bbox[0])
+                draw.draw.text((chord_x, chord_y), chord_text, fill=_with_alpha(self.settings.outline_color, 242))
+                draw.draw.text((notes_x, chord_y + 30), notes_text, fill=_with_alpha(self.settings.outline_color, 198))
+
+    def _draw_beat_pips(self, draw: _LayerContext, measure: Measure, beat_index: int, origin_x: float, origin_y: float) -> None:
+        pip_width = 24
+        gap = 8
+        for index in range(measure.numerator):
+            x0 = origin_x + index * (pip_width + gap)
+            color = self.settings.outline_color if index + 1 <= beat_index else self.settings.idle_note_color
+            alpha = 210 if index + 1 == beat_index else 115 if index + 1 < beat_index else 72
+            draw.rectangle((x0, origin_y, x0 + pip_width, origin_y + 7), fill=_with_alpha(color, alpha))
+
+    def _current_beat_in_measure(self, measure: Measure, time_sec: float) -> float:
+        measure_duration = max(1e-9, measure.end_sec - measure.start_sec)
+        elapsed_ratio = _clamp((time_sec - measure.start_sec) / measure_duration)
+        return 1.0 + elapsed_ratio * max(0.0, float(measure.numerator))
+
+    def get_chord_for_time(self, time_sec: float):
+        if not self.project.chords:
+            return None
+        index = bisect_right(self._chord_start_seconds, time_sec) - 1
+        if index < 0:
+            return None
+        chord = self.project.chords[index]
+        if chord.start_sec <= time_sec < chord.end_sec:
+            return chord
+        return None
+
+    @staticmethod
+    def _format_clock(seconds: float) -> str:
+        total_milliseconds = max(0, int(round(seconds * 1000)))
+        minutes, remainder = divmod(total_milliseconds, 60_000)
+        secs, milliseconds = divmod(remainder, 1000)
+        return f"{minutes:02d}:{secs:02d}.{milliseconds:03d}"
 
     def _get_prepared_measure(self, measure: Measure, width: int, height: int) -> tuple[Image.Image, tuple[_PreparedSegment, ...]]:
         cache_key = (measure.index, width, height, self._cache_signature())
@@ -1077,8 +1513,12 @@ class ProjectRenderer:
                 segments_by_measure[measure.index].append(
                     _VisibleSegment(
                         note=note.note,
+                        segment_start_beat=overlap_start,
+                        segment_end_beat=overlap_end,
                         start_ratio=max(0.0, min(1.0, start_ratio)),
                         end_ratio=max(0.0, min(1.0, end_ratio)),
+                        note_start_beat=note.start_beat,
+                        note_end_beat=note.end_beat,
                         note_start_sec=note.start_sec,
                         note_end_sec=note.end_sec,
                     )

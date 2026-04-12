@@ -22,6 +22,7 @@ from .models import (
     GLOW_STYLE_CHOICES,
     RELEASE_FADE_CURVE_CHOICES,
     RELEASE_FADE_STYLE_CHOICES,
+    VIEW_MODE_CHOICES,
     MidiProject,
     get_render_settings_for_theme,
     render_settings_from_mapping,
@@ -72,6 +73,7 @@ def index():
         "userThemeNames": user_preset_names(),
         "choices": {
             "themes": theme_name_choices(),
+            "viewModes": _choices_to_payload(VIEW_MODE_CHOICES),
             "corners": _choices_to_payload(CORNER_STYLE_CHOICES),
             "glows": _choices_to_payload(GLOW_STYLE_CHOICES),
             "animations": _choices_to_payload(ANIMATION_STYLE_CHOICES),
@@ -169,7 +171,7 @@ def remove_preset(preset_name: str):
 def preview_project(project_id: str):
     stored_project = _PROJECTS.get(project_id)
     if not stored_project:
-        return jsonify({"error": "MIDIが見つかりません。再読み込みしてください。"}), 404
+        return jsonify({"error": "MIDIが見つかりません。もう一度読み込んでください。"}), 404
 
     payload = request.get_json(silent=True) or {}
     settings = render_settings_from_mapping(payload.get("settings"))
@@ -190,7 +192,7 @@ def preview_project(project_id: str):
 def export_project(project_id: str):
     stored_project = _PROJECTS.get(project_id)
     if not stored_project:
-        return jsonify({"error": "MIDIが見つかりません。再読み込みしてください。"}), 404
+        return jsonify({"error": "MIDIが見つかりません。もう一度読み込んでください。"}), 404
 
     payload = request.get_json(silent=True) or {}
     settings = render_settings_from_mapping(payload.get("settings"))
@@ -209,7 +211,7 @@ def export_project(project_id: str):
         fps=fps,
     )
 
-    download_name = f"{Path(stored_project.original_name).stem}_小節切り替え.mp4"
+    download_name = f"{Path(stored_project.original_name).stem}_演奏ビュー.mp4"
     response = send_file(output_path, as_attachment=True, download_name=download_name, mimetype="video/mp4")
     response.call_on_close(lambda: output_path.unlink(missing_ok=True))
     return response
@@ -236,8 +238,8 @@ def _coerce_float(value: Any, default: float, minimum: float, maximum: float) ->
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MIDI小節切り替え動画ツールのブラウザ版を起動します。")
-    parser.add_argument("--host", default="127.0.0.1", help="待ち受けホスト。スマホから使うなら 0.0.0.0 を指定します。")
+    parser = argparse.ArgumentParser(description="MIDI演出動画メーカーのブラウザ版を起動します。")
+    parser.add_argument("--host", default="127.0.0.1", help="待ち受けホスト。スマホから使う場合は 0.0.0.0 を指定します。")
     parser.add_argument("--port", type=int, default=8000, help="待ち受けポート番号。")
     args = parser.parse_args()
     app.run(host=args.host, port=args.port, debug=False, threaded=True)

@@ -21,6 +21,7 @@ from .models import (
     GLOW_STYLE_CHOICES,
     RELEASE_FADE_CURVE_CHOICES,
     RELEASE_FADE_STYLE_CHOICES,
+    VIEW_MODE_CHOICES,
     MidiProject,
     clone_render_settings,
     get_render_settings_for_theme,
@@ -69,6 +70,8 @@ class MidiVideoApp:
         self._afterimage_label_to_value = {label: value for value, label in AFTERIMAGE_STYLE_CHOICES}
         self._corner_value_to_label = {value: label for value, label in CORNER_STYLE_CHOICES}
         self._corner_label_to_value = {label: value for value, label in CORNER_STYLE_CHOICES}
+        self._view_mode_value_to_label = {value: label for value, label in VIEW_MODE_CHOICES}
+        self._view_mode_label_to_value = {label: value for value, label in VIEW_MODE_CHOICES}
         self._release_fade_value_to_label = {value: label for value, label in RELEASE_FADE_STYLE_CHOICES}
         self._release_fade_label_to_value = {label: value for value, label in RELEASE_FADE_STYLE_CHOICES}
         self._release_curve_value_to_label = {value: label for value, label in RELEASE_FADE_CURVE_CHOICES}
@@ -87,6 +90,7 @@ class MidiVideoApp:
         self.preset_name_var = tk.StringVar()
 
         self.theme_var = tk.StringVar(value=DEFAULT_THEME_NAME)
+        self.view_mode_var = tk.StringVar(value=self._view_mode_value_to_label[self.render_settings.view_mode])
         self.corner_style_var = tk.StringVar(value=self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var = tk.StringVar(value=self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var = tk.StringVar(value=self._animation_value_to_label[self.render_settings.animation_style])
@@ -103,6 +107,13 @@ class MidiVideoApp:
         self.attack_fade_curve_var = tk.StringVar(
             value=self._attack_curve_value_to_label[self.render_settings.attack_fade_curve]
         )
+        self.visible_measure_count_var = tk.DoubleVar(value=float(self.render_settings.visible_measure_count))
+        self.hide_future_notes_var = tk.BooleanVar(value=self.render_settings.hide_future_notes)
+        self.show_time_overlay_var = tk.BooleanVar(value=self.render_settings.show_time_overlay)
+        self.show_measure_overlay_var = tk.BooleanVar(value=self.render_settings.show_measure_overlay)
+        self.show_stats_overlay_var = tk.BooleanVar(value=self.render_settings.show_stats_overlay)
+        self.show_chord_overlay_var = tk.BooleanVar(value=self.render_settings.show_chord_overlay)
+        self.show_playhead_var = tk.BooleanVar(value=self.render_settings.show_playhead)
         self.glow_strength_var = tk.DoubleVar(value=self.render_settings.glow_strength * 100.0)
         self.animation_strength_var = tk.DoubleVar(value=self.render_settings.animation_strength * 100.0)
         self.animation_speed_var = tk.DoubleVar(value=self.render_settings.animation_speed * 100.0)
@@ -133,6 +144,7 @@ class MidiVideoApp:
         self.afterimage_padding_text_var = tk.StringVar()
         self.release_fade_duration_text_var = tk.StringVar()
         self.attack_fade_duration_text_var = tk.StringVar()
+        self.visible_measure_count_text_var = tk.StringVar()
 
         self._color_labels = {
             "background_color": "背景色",
@@ -336,6 +348,42 @@ class MidiVideoApp:
         )
         self.corner_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
         self.corner_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
+        row += 1
+        ttk.Label(panel, text="表示モード").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.view_mode_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in VIEW_MODE_CHOICES],
+            textvariable=self.view_mode_var,
+            width=16,
+        )
+        self.view_mode_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.view_mode_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "表示する小節数",
+            self.visible_measure_count_var,
+            self.visible_measure_count_text_var,
+            1,
+            8,
+            self._on_strength_changed,
+        )
+
+        row += 1
+        overlay_frame = ttk.Frame(panel)
+        overlay_frame.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        overlay_frame.columnconfigure(0, weight=1)
+        overlay_frame.columnconfigure(1, weight=1)
+        ttk.Checkbutton(overlay_frame, text="未再生ノーツを隠す", variable=self.hide_future_notes_var, command=self._on_toggle_changed).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(overlay_frame, text="再生バー", variable=self.show_playhead_var, command=self._on_toggle_changed).grid(row=0, column=1, sticky="w")
+        ttk.Checkbutton(overlay_frame, text="時間とビート表示", variable=self.show_time_overlay_var, command=self._on_toggle_changed).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(overlay_frame, text="小節ガイド", variable=self.show_measure_overlay_var, command=self._on_toggle_changed).grid(row=1, column=1, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(overlay_frame, text="統計表示", variable=self.show_stats_overlay_var, command=self._on_toggle_changed).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(overlay_frame, text="コード表示", variable=self.show_chord_overlay_var, command=self._on_toggle_changed).grid(row=2, column=1, sticky="w", pady=(6, 0))
 
         row += 1
         ttk.Separator(panel).grid(row=row, column=0, columnspan=4, sticky="ew", pady=12)
@@ -836,6 +884,7 @@ class MidiVideoApp:
         if self._updating_style_controls:
             return
 
+        self.render_settings.view_mode = self._view_mode_label_to_value[self.view_mode_var.get()]
         self.render_settings.corner_style = self._corner_label_to_value[self.corner_style_var.get()]
         self.render_settings.glow_style = self._glow_label_to_value[self.glow_style_var.get()]
         self.render_settings.animation_style = self._animation_label_to_value[self.animation_style_var.get()]
@@ -850,10 +899,27 @@ class MidiVideoApp:
         self.preset_name_var.set("")
         self._refresh_preview_if_loaded()
 
+    def _on_toggle_changed(self) -> None:
+        if self._updating_style_controls:
+            return
+
+        self.render_settings.hide_future_notes = bool(self.hide_future_notes_var.get())
+        self.render_settings.show_time_overlay = bool(self.show_time_overlay_var.get())
+        self.render_settings.show_measure_overlay = bool(self.show_measure_overlay_var.get())
+        self.render_settings.show_stats_overlay = bool(self.show_stats_overlay_var.get())
+        self.render_settings.show_chord_overlay = bool(self.show_chord_overlay_var.get())
+        self.render_settings.show_playhead = bool(self.show_playhead_var.get())
+        if self.renderer:
+            self.renderer.set_settings(self.render_settings)
+        self.theme_var.set(CUSTOM_THEME_NAME)
+        self.preset_name_var.set("")
+        self._refresh_preview_if_loaded()
+
     def _on_strength_changed(self, _raw_value=None) -> None:
         if self._updating_style_controls:
             return
 
+        self.render_settings.visible_measure_count = max(1, min(8, int(round(self.visible_measure_count_var.get()))))
         self.render_settings.glow_strength = round(self.glow_strength_var.get() / 100.0, 3)
         self.render_settings.animation_strength = round(self.animation_strength_var.get() / 100.0, 3)
         self.render_settings.animation_speed = round(self.animation_speed_var.get() / 100.0, 3)
@@ -881,6 +947,7 @@ class MidiVideoApp:
 
         self._refresh_theme_choices(selected_theme)
         self.theme_var.set(selected_theme)
+        self.view_mode_var.set(self._view_mode_value_to_label[self.render_settings.view_mode])
         self.corner_style_var.set(self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var.set(self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var.set(self._animation_value_to_label[self.render_settings.animation_style])
@@ -889,6 +956,13 @@ class MidiVideoApp:
         self.release_fade_curve_var.set(self._release_curve_value_to_label[self.render_settings.release_fade_curve])
         self.attack_fade_style_var.set(self._attack_fade_value_to_label[self.render_settings.attack_fade_style])
         self.attack_fade_curve_var.set(self._attack_curve_value_to_label[self.render_settings.attack_fade_curve])
+        self.visible_measure_count_var.set(float(self.render_settings.visible_measure_count))
+        self.hide_future_notes_var.set(self.render_settings.hide_future_notes)
+        self.show_time_overlay_var.set(self.render_settings.show_time_overlay)
+        self.show_measure_overlay_var.set(self.render_settings.show_measure_overlay)
+        self.show_stats_overlay_var.set(self.render_settings.show_stats_overlay)
+        self.show_chord_overlay_var.set(self.render_settings.show_chord_overlay)
+        self.show_playhead_var.set(self.render_settings.show_playhead)
         self.glow_strength_var.set(self.render_settings.glow_strength * 100.0)
         self.animation_strength_var.set(self.render_settings.animation_strength * 100.0)
         self.animation_speed_var.set(self.render_settings.animation_speed * 100.0)
@@ -923,6 +997,7 @@ class MidiVideoApp:
         self.afterimage_strength_text_var.set(f"{self.afterimage_strength_var.get():.0f}%")
         self.note_length_scale_text_var.set(f"{self.note_length_scale_var.get():.0f}%")
         self.note_height_scale_text_var.set(f"{self.note_height_scale_var.get():.0f}%")
+        self.visible_measure_count_text_var.set(f"{int(round(self.visible_measure_count_var.get()))}小節")
         self.horizontal_padding_text_var.set(f"{self.horizontal_padding_var.get():.0f}%")
         self.vertical_padding_text_var.set(f"{self.vertical_padding_var.get():.0f}%")
         self.idle_outline_width_text_var.set(f"{self.idle_outline_width_var.get() / 100.0:.2f}x")
