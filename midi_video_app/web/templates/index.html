@@ -66,7 +66,7 @@
               <span>MIDIを選ぶ</span>
               <input id="midiFileInput" type="file" accept=".mid,.midi">
             </label>
-            <button id="exportButton" class="primary" type="button">MP4を書き出し</button>
+            <button id="exportButton" class="primary" type="button">H.264を書き出し</button>
           </div>
 
           <div class="meta-row">
@@ -166,6 +166,7 @@
               <label class="toggle-card"><input id="showStatsOverlayCheckbox" type="checkbox"><span>統計表示</span></label>
               <label class="toggle-card"><input id="showChordOverlayCheckbox" type="checkbox"><span>コード表示</span></label>
               <label class="toggle-card"><input id="transparentBackgroundCheckbox" type="checkbox"><span>背景透過</span></label>
+              <label class="toggle-card"><input id="fitToVisibleNoteRangeCheckbox" type="checkbox"><span>表示中の音域だけに自動フィット</span></label>
             </div>
           </section>
 
@@ -322,6 +323,16 @@
           </section>
 
           <div class="export-box">
+            <div class="export-grid">
+              <label class="field">
+                <span>出力形式</span>
+                <select id="exportFormatSelect"></select>
+              </label>
+              <label class="field">
+                <span>解像度</span>
+                <select id="exportResolutionSelect"></select>
+              </label>
+            </div>
             <label class="field">
               <span>FPS</span>
               <input id="fpsInput" type="number" min="1" max="240" value="120">

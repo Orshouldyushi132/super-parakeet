@@ -80,6 +80,7 @@ class RenderSettings:
     attack_fade_curve: str = "smooth"
     attack_fade_duration_sec: float = 0.12
     visible_measure_count: int = 4
+    fit_to_visible_note_range: bool = False
     hide_future_notes: bool = True
     show_time_overlay: bool = True
     show_measure_overlay: bool = True
@@ -417,6 +418,7 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
     }
     bool_fields = {
         "transparent_background",
+        "fit_to_visible_note_range",
         "hide_future_notes",
         "show_time_overlay",
         "show_measure_overlay",

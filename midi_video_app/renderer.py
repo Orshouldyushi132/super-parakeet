@@ -463,6 +463,9 @@ class ProjectRenderer:
         return start_index, visible_measure_count
 
     def _performance_note_range(self, start_measure_index: int, visible_measure_count: int, time_sec: float) -> tuple[int, int]:
+        if not self.settings.fit_to_visible_note_range:
+            return self._project_note_range()
+
         notes_in_window: list[int] = []
         for measure_index in range(start_measure_index, start_measure_index + visible_measure_count):
             for segment in self._measure_segments[measure_index]:
@@ -480,6 +483,14 @@ class ProjectRenderer:
         if min_note == max_note:
             min_note = max(self.project.min_note, min_note - 2)
             max_note = min(self.project.max_note, max_note + 2)
+        return min_note, max_note
+
+    def _project_note_range(self) -> tuple[int, int]:
+        min_note = self.project.min_note
+        max_note = self.project.max_note
+        if min_note == max_note:
+            min_note -= 2
+            max_note += 2
         return min_note, max_note
 
     def _segment_visible_end_beat(self, segment: _VisibleSegment, time_sec: float) -> float:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -11,7 +12,15 @@ from typing import Any
 from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
-from .exporter import export_video
+from .exporter import (
+    DEFAULT_EXPORT_FORMAT,
+    DEFAULT_EXPORT_RESOLUTION,
+    EXPORT_FORMAT_CHOICES,
+    EXPORT_FORMAT_H264,
+    EXPORT_FORMAT_PNG_SEQUENCE,
+    EXPORT_RESOLUTION_PRESETS,
+    export_video,
+)
 from .midi_loader import load_midi_project
 from .models import (
     AFTERIMAGE_STYLE_CHOICES,
@@ -67,10 +76,22 @@ def index():
         "defaultTheme": DEFAULT_THEME_NAME,
         "customTheme": CUSTOM_THEME_NAME,
         "defaultFps": 120,
+        "defaultExportFormat": DEFAULT_EXPORT_FORMAT,
+        "defaultExportResolution": DEFAULT_EXPORT_RESOLUTION,
         "defaultSettings": render_settings_to_dict(get_render_settings_for_theme(DEFAULT_THEME_NAME)),
         "themePresets": presets_payload(),
         "themeOrder": preset_order(),
         "userThemeNames": user_preset_names(),
+        "exportFormats": _choices_to_payload(EXPORT_FORMAT_CHOICES),
+        "exportResolutions": [
+            {
+                "value": preset.value,
+                "label": preset.label,
+                "width": preset.width,
+                "height": preset.height,
+            }
+            for preset in EXPORT_RESOLUTION_PRESETS
+        ],
         "choices": {
             "themes": theme_name_choices(),
             "viewModes": _choices_to_payload(VIEW_MODE_CHOICES),
@@ -171,12 +192,12 @@ def remove_preset(preset_name: str):
 def preview_project(project_id: str):
     stored_project = _PROJECTS.get(project_id)
     if not stored_project:
-        return jsonify({"error": "MIDIが見つかりません。もう一度読み込んでください。"}), 404
+        return jsonify({"error": "MIDIが見つかりません。もう一度読み込み直してください。"}), 404
 
     payload = request.get_json(silent=True) or {}
     settings = render_settings_from_mapping(payload.get("settings"))
     width = _coerce_int(payload.get("width"), 960, 240, 1920)
-    height = _coerce_int(payload.get("height"), 540, 180, 1080)
+    height = _coerce_int(payload.get("height"), 540, 180, 1920)
     time_sec = _coerce_float(payload.get("timeSec"), 0.0, 0.0, stored_project.project.duration_sec)
 
     renderer = ProjectRenderer(stored_project.project, settings)
@@ -192,17 +213,51 @@ def preview_project(project_id: str):
 def export_project(project_id: str):
     stored_project = _PROJECTS.get(project_id)
     if not stored_project:
-        return jsonify({"error": "MIDIが見つかりません。もう一度読み込んでください。"}), 404
+        return jsonify({"error": "MIDIが見つかりません。もう一度読み込み直してください。"}), 404
 
     payload = request.get_json(silent=True) or {}
     settings = render_settings_from_mapping(payload.get("settings"))
     fps = _coerce_int(payload.get("fps"), 120, 1, 240)
     width = _coerce_int(payload.get("width"), 1920, 320, 3840)
-    height = _coerce_int(payload.get("height"), 1080, 180, 2160)
+    height = _coerce_int(payload.get("height"), 1080, 180, 3840)
+    export_format = str(payload.get("format", DEFAULT_EXPORT_FORMAT)).strip().lower()
+    if export_format not in {EXPORT_FORMAT_H264, EXPORT_FORMAT_PNG_SEQUENCE}:
+        export_format = DEFAULT_EXPORT_FORMAT
+    if export_format == EXPORT_FORMAT_H264:
+        settings.transparent_background = False
 
-    export_suffix = ".mp4"
-    output_path = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}{export_suffix}"
     renderer = ProjectRenderer(stored_project.project, settings)
+    source_stem = Path(stored_project.original_name).stem
+
+    if export_format == EXPORT_FORMAT_PNG_SEQUENCE:
+        output_path = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}_png"
+        final_output_dir = export_video(
+            project=stored_project.project,
+            renderer=renderer,
+            output_path=output_path,
+            width=width,
+            height=height,
+            fps=fps,
+            export_format=export_format,
+            png_sequence_prefix=source_stem,
+        )
+        archive_base = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}_png_sequence"
+        archive_path = Path(shutil.make_archive(str(archive_base), "zip", root_dir=final_output_dir))
+        response = send_file(
+            archive_path,
+            as_attachment=True,
+            download_name=f"{source_stem}_連番PNG.zip",
+            mimetype="application/zip",
+        )
+
+        def cleanup_png() -> None:
+            archive_path.unlink(missing_ok=True)
+            shutil.rmtree(final_output_dir, ignore_errors=True)
+
+        response.call_on_close(cleanup_png)
+        return response
+
+    output_path = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}.mp4"
     final_output_path = export_video(
         project=stored_project.project,
         renderer=renderer,
@@ -210,13 +265,15 @@ def export_project(project_id: str):
         width=width,
         height=height,
         fps=fps,
+        export_format=export_format,
+        png_sequence_prefix=source_stem,
     )
-
-    extension = ".mp4"
-    mime_type = "video/mp4"
-    suffix_label = "透過演奏ビュー" if settings.transparent_background else "演奏ビュー"
-    download_name = f"{Path(stored_project.original_name).stem}_{suffix_label}{extension}"
-    response = send_file(final_output_path, as_attachment=True, download_name=download_name, mimetype=mime_type)
+    response = send_file(
+        final_output_path,
+        as_attachment=True,
+        download_name=f"{source_stem}_{width}x{height}.mp4",
+        mimetype="video/mp4",
+    )
     response.call_on_close(lambda: final_output_path.unlink(missing_ok=True))
     return response
 
@@ -243,8 +300,8 @@ def _coerce_float(value: Any, default: float, minimum: float, maximum: float) ->
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="MIDI演出動画メーカーのブラウザ版を起動します。")
-    parser.add_argument("--host", default="127.0.0.1", help="待ち受けホスト。スマホから使う場合は 0.0.0.0 を指定します。")
-    parser.add_argument("--port", type=int, default=8000, help="待ち受けポート番号。")
+    parser.add_argument("--host", default="127.0.0.1", help="待ち受けホストです。スマホから使う場合は 0.0.0.0 を指定します。")
+    parser.add_argument("--port", type=int, default=8000, help="待ち受けポート番号です。")
     args = parser.parse_args()
     app.run(host=args.host, port=args.port, debug=False, threaded=True)
 

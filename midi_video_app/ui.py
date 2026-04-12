@@ -8,7 +8,17 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from PIL import ImageTk
 
-from .exporter import export_video
+from .exporter import (
+    DEFAULT_EXPORT_FORMAT,
+    DEFAULT_EXPORT_RESOLUTION,
+    EXPORT_FORMAT_CHOICES,
+    EXPORT_FORMAT_H264,
+    EXPORT_FORMAT_PNG_SEQUENCE,
+    EXPORT_RESOLUTION_PRESETS,
+    ExportResolutionPreset,
+    export_video,
+    get_export_resolution_preset,
+)
 from .midi_loader import load_midi_project
 from .models import (
     AFTERIMAGE_STYLE_CHOICES,
@@ -36,10 +46,8 @@ from .preset_store import (
 from .renderer import ProjectRenderer
 
 
-PREVIEW_WIDTH = 960
-PREVIEW_HEIGHT = 540
-EXPORT_WIDTH = 1920
-EXPORT_HEIGHT = 1080
+PREVIEW_MAX_WIDTH = 960
+PREVIEW_MAX_HEIGHT = 540
 DEFAULT_FPS = 120
 
 
@@ -80,6 +88,10 @@ class MidiVideoApp:
         self._attack_fade_label_to_value = {label: value for value, label in ATTACK_FADE_STYLE_CHOICES}
         self._attack_curve_value_to_label = {value: label for value, label in ATTACK_FADE_CURVE_CHOICES}
         self._attack_curve_label_to_value = {label: value for value, label in ATTACK_FADE_CURVE_CHOICES}
+        self._export_format_value_to_label = {value: label for value, label in EXPORT_FORMAT_CHOICES}
+        self._export_format_label_to_value = {label: value for value, label in EXPORT_FORMAT_CHOICES}
+        self._export_resolution_value_to_label = {preset.value: preset.label for preset in EXPORT_RESOLUTION_PRESETS}
+        self._export_resolution_label_to_value = {preset.label: preset.value for preset in EXPORT_RESOLUTION_PRESETS}
         self._theme_names = theme_name_choices()
 
         self.file_label_var = tk.StringVar(value="MIDIファイルが読み込まれていません")
@@ -87,6 +99,10 @@ class MidiVideoApp:
         self.time_var = tk.StringVar(value="00:00.000 / 00:00.000")
         self.measure_var = tk.StringVar(value="小節: -")
         self.fps_var = tk.StringVar(value=str(DEFAULT_FPS))
+        self.export_format_var = tk.StringVar(value=self._export_format_value_to_label[DEFAULT_EXPORT_FORMAT])
+        self.export_resolution_var = tk.StringVar(
+            value=self._export_resolution_value_to_label[DEFAULT_EXPORT_RESOLUTION]
+        )
         self.preset_name_var = tk.StringVar()
 
         self.theme_var = tk.StringVar(value=DEFAULT_THEME_NAME)
@@ -109,6 +125,7 @@ class MidiVideoApp:
         )
         self.visible_measure_count_var = tk.DoubleVar(value=float(self.render_settings.visible_measure_count))
         self.transparent_background_var = tk.BooleanVar(value=self.render_settings.transparent_background)
+        self.fit_to_visible_note_range_var = tk.BooleanVar(value=self.render_settings.fit_to_visible_note_range)
         self.hide_future_notes_var = tk.BooleanVar(value=self.render_settings.hide_future_notes)
         self.show_time_overlay_var = tk.BooleanVar(value=self.render_settings.show_time_overlay)
         self.show_measure_overlay_var = tk.BooleanVar(value=self.render_settings.show_measure_overlay)
@@ -222,12 +239,34 @@ class MidiVideoApp:
         ttk.Button(controls, text="停止", command=self.stop_playback).pack(side="left", padx=(8, 0))
         ttk.Button(controls, text="前の小節へ", command=lambda: self.jump_measure(-1)).pack(side="left", padx=(8, 0))
         ttk.Button(controls, text="次の小節へ", command=lambda: self.jump_measure(1)).pack(side="left", padx=(8, 0))
-        ttk.Button(controls, text="MP4を書き出す", style="Accent.TButton", command=self.export_mp4).pack(side="left", padx=(16, 0))
+        ttk.Button(controls, text="書き出し", style="Accent.TButton", command=self.export_media).pack(side="left", padx=(16, 0))
 
-        fps_frame = ttk.Frame(controls, style="Surface.TFrame")
-        fps_frame.pack(side="right")
-        ttk.Label(fps_frame, text="FPS", style="Muted.TLabel").pack(side="left", padx=(0, 6))
-        ttk.Entry(fps_frame, width=6, textvariable=self.fps_var).pack(side="left")
+        export_controls = ttk.Frame(controls, style="Surface.TFrame")
+        export_controls.pack(side="right")
+        ttk.Label(export_controls, text="形式", style="Muted.TLabel").pack(side="left", padx=(0, 6))
+        self.export_format_combo = ttk.Combobox(
+            export_controls,
+            state="readonly",
+            width=11,
+            values=[label for _, label in EXPORT_FORMAT_CHOICES],
+            textvariable=self.export_format_var,
+        )
+        self.export_format_combo.pack(side="left")
+        self.export_format_combo.bind("<<ComboboxSelected>>", self._on_export_options_changed)
+
+        ttk.Label(export_controls, text="解像度", style="Muted.TLabel").pack(side="left", padx=(12, 6))
+        self.export_resolution_combo = ttk.Combobox(
+            export_controls,
+            state="readonly",
+            width=18,
+            values=[preset.label for preset in EXPORT_RESOLUTION_PRESETS],
+            textvariable=self.export_resolution_var,
+        )
+        self.export_resolution_combo.pack(side="left")
+        self.export_resolution_combo.bind("<<ComboboxSelected>>", self._on_export_options_changed)
+
+        ttk.Label(export_controls, text="FPS", style="Muted.TLabel").pack(side="left", padx=(12, 6))
+        ttk.Entry(export_controls, width=6, textvariable=self.fps_var).pack(side="left")
 
         meta = ttk.Frame(outer)
         meta.pack(fill="x", pady=(12, 8))
@@ -386,7 +425,19 @@ class MidiVideoApp:
         ttk.Checkbutton(overlay_frame, text="小節ガイド", variable=self.show_measure_overlay_var, command=self._on_toggle_changed).grid(row=1, column=1, sticky="w", pady=(6, 0))
         ttk.Checkbutton(overlay_frame, text="統計表示", variable=self.show_stats_overlay_var, command=self._on_toggle_changed).grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(overlay_frame, text="コード表示", variable=self.show_chord_overlay_var, command=self._on_toggle_changed).grid(row=2, column=1, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(overlay_frame, text="背景透過", variable=self.transparent_background_var, command=self._on_toggle_changed).grid(row=3, column=0, sticky="w", pady=(6, 0))
+        self.transparent_background_check = ttk.Checkbutton(
+            overlay_frame,
+            text="背景透過",
+            variable=self.transparent_background_var,
+            command=self._on_toggle_changed,
+        )
+        self.transparent_background_check.grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(
+            overlay_frame,
+            text="表示中の音域だけに自動フィット",
+            variable=self.fit_to_visible_note_range_var,
+            command=self._on_toggle_changed,
+        ).grid(row=3, column=1, sticky="w", pady=(6, 0))
 
         row += 1
         ttk.Separator(panel).grid(row=row, column=0, columnspan=4, sticky="ew", pady=12)
@@ -776,6 +827,9 @@ class MidiVideoApp:
         self._refresh_preview()
 
     def export_mp4(self) -> None:
+        self.export_media()
+        return
+
         if not self.project or not self.renderer:
             messagebox.showinfo("MIDIを開いてください", "動画を書き出す前にMIDIファイルを読み込んでください。")
             return
@@ -832,6 +886,137 @@ class MidiVideoApp:
                 return
 
             self.root.after(0, lambda: messagebox.showinfo("書き出し完了", f"動画を保存しました:\n{output_path}"))
+            self.root.after(0, lambda: self.status_var.set("書き出しが完了しました。"))
+
+        self._export_thread = threading.Thread(target=run_export, daemon=True)
+        self._export_thread.start()
+
+    def _selected_export_format(self) -> str:
+        return self._export_format_label_to_value.get(self.export_format_var.get(), DEFAULT_EXPORT_FORMAT)
+
+    def _selected_export_resolution_preset(self) -> ExportResolutionPreset:
+        value = self._export_resolution_label_to_value.get(
+            self.export_resolution_var.get(),
+            DEFAULT_EXPORT_RESOLUTION,
+        )
+        return get_export_resolution_preset(value)
+
+    def _get_preview_dimensions(self) -> tuple[int, int]:
+        preset = self._selected_export_resolution_preset()
+        ratio = preset.width / max(preset.height, 1)
+        max_ratio = PREVIEW_MAX_WIDTH / PREVIEW_MAX_HEIGHT
+        if ratio >= max_ratio:
+            width = PREVIEW_MAX_WIDTH
+            height = max(1, int(round(width / ratio)))
+        else:
+            height = PREVIEW_MAX_HEIGHT
+            width = max(1, int(round(height * ratio)))
+        return width, height
+
+    @staticmethod
+    def _next_available_directory(parent: Path, base_name: str) -> Path:
+        candidate = parent / base_name
+        if not candidate.exists():
+            return candidate
+        suffix = 2
+        while True:
+            numbered = parent / f"{base_name}_{suffix}"
+            if not numbered.exists():
+                return numbered
+            suffix += 1
+
+    def _update_export_option_state(self) -> None:
+        is_png_sequence = self._selected_export_format() == EXPORT_FORMAT_PNG_SEQUENCE
+        if is_png_sequence:
+            self.transparent_background_check.state(["!disabled"])
+        else:
+            self.transparent_background_check.state(["disabled"])
+            if self.transparent_background_var.get():
+                self.transparent_background_var.set(False)
+                self.render_settings.transparent_background = False
+                if self.renderer:
+                    self.renderer.set_settings(self.render_settings)
+
+    def _on_export_options_changed(self, _event=None) -> None:
+        self._update_export_option_state()
+        self._refresh_preview_if_loaded()
+
+    def export_media(self) -> None:
+        if not self.project or not self.renderer:
+            messagebox.showinfo("MIDIを開いてください", "書き出す前にMIDIファイルを読み込んでください。")
+            return
+
+        if self._export_thread and self._export_thread.is_alive():
+            messagebox.showinfo("書き出し中です", "すでに書き出し中です。完了してからもう一度お試しください。")
+            return
+
+        try:
+            fps = max(1, int(self.fps_var.get()))
+        except ValueError:
+            messagebox.showerror("FPSが不正です", "FPSには1以上の整数を入力してください。")
+            return
+
+        export_format = self._selected_export_format()
+        resolution = self._selected_export_resolution_preset()
+        output_path: str | Path
+
+        if export_format == EXPORT_FORMAT_PNG_SEQUENCE:
+            parent_directory = filedialog.askdirectory(title="連番PNGの保存先フォルダを選択")
+            if not parent_directory:
+                return
+            output_path = self._next_available_directory(
+                Path(parent_directory),
+                f"{self.project.source_path.stem}_連番PNG",
+            )
+        else:
+            default_name = f"{self.project.source_path.stem}_{resolution.width}x{resolution.height}.mp4"
+            output_path = filedialog.asksaveasfilename(
+                title="H.264動画の保存先を選択",
+                defaultextension=".mp4",
+                initialfile=default_name,
+                filetypes=[("H.264 MP4", "*.mp4")],
+            )
+            if not output_path:
+                return
+            if Path(output_path).suffix.lower() != ".mp4":
+                output_path = str(Path(output_path).with_suffix(".mp4"))
+
+        export_settings = clone_render_settings(self.render_settings)
+        if export_format == EXPORT_FORMAT_H264:
+            export_settings.transparent_background = False
+        export_renderer = ProjectRenderer(self.project, export_settings)
+
+        self.playing = False
+        self.progress.configure(value=0.0)
+        self.status_var.set("現在の見た目設定で書き出しています...")
+
+        def progress_callback(progress_value: float, message: str) -> None:
+            self.root.after(0, lambda: self._update_export_progress(progress_value, message))
+
+        def run_export() -> None:
+            try:
+                saved_path = export_video(
+                    project=self.project,
+                    renderer=export_renderer,
+                    output_path=output_path,
+                    width=resolution.width,
+                    height=resolution.height,
+                    fps=fps,
+                    progress_callback=progress_callback,
+                    export_format=export_format,
+                    png_sequence_prefix=self.project.source_path.stem,
+                )
+            except Exception as error:
+                self.root.after(0, lambda: messagebox.showerror("書き出しに失敗しました", str(error)))
+                self.root.after(0, lambda: self.status_var.set("書き出しに失敗しました。"))
+                return
+
+            completion_message = (
+                f"連番PNGを書き出しました:\n{saved_path}"
+                if export_format == EXPORT_FORMAT_PNG_SEQUENCE
+                else f"H.264動画を書き出しました:\n{saved_path}"
+            )
+            self.root.after(0, lambda: messagebox.showinfo("書き出し完了", completion_message))
             self.root.after(0, lambda: self.status_var.set("書き出しが完了しました。"))
 
         self._export_thread = threading.Thread(target=run_export, daemon=True)
@@ -913,6 +1098,7 @@ class MidiVideoApp:
             return
 
         self.render_settings.transparent_background = bool(self.transparent_background_var.get())
+        self.render_settings.fit_to_visible_note_range = bool(self.fit_to_visible_note_range_var.get())
         self.render_settings.hide_future_notes = bool(self.hide_future_notes_var.get())
         self.render_settings.show_time_overlay = bool(self.show_time_overlay_var.get())
         self.render_settings.show_measure_overlay = bool(self.show_measure_overlay_var.get())
@@ -923,6 +1109,7 @@ class MidiVideoApp:
             self.renderer.set_settings(self.render_settings)
         self.theme_var.set(CUSTOM_THEME_NAME)
         self.preset_name_var.set("")
+        self._update_export_option_state()
         self._refresh_preview_if_loaded()
 
     def _on_strength_changed(self, _raw_value=None) -> None:
@@ -968,6 +1155,7 @@ class MidiVideoApp:
         self.attack_fade_curve_var.set(self._attack_curve_value_to_label[self.render_settings.attack_fade_curve])
         self.visible_measure_count_var.set(float(self.render_settings.visible_measure_count))
         self.transparent_background_var.set(self.render_settings.transparent_background)
+        self.fit_to_visible_note_range_var.set(self.render_settings.fit_to_visible_note_range)
         self.hide_future_notes_var.set(self.render_settings.hide_future_notes)
         self.show_time_overlay_var.set(self.render_settings.show_time_overlay)
         self.show_measure_overlay_var.set(self.render_settings.show_measure_overlay)
@@ -998,6 +1186,7 @@ class MidiVideoApp:
 
         self.preset_name_var.set(selected_theme if is_user_preset(selected_theme) else "")
         self._update_preset_button_states()
+        self._update_export_option_state()
 
         self._updating_style_controls = False
 
@@ -1052,7 +1241,8 @@ class MidiVideoApp:
             self.measure_var.set("小節: -")
             return
 
-        frame = self.renderer.render_frame(self.current_time_sec, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+        preview_width, preview_height = self._get_preview_dimensions()
+        frame = self.renderer.render_frame(self.current_time_sec, preview_width, preview_height)
         self._preview_image = ImageTk.PhotoImage(frame)
         self.preview_label.configure(image=self._preview_image)
 

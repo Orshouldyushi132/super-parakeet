@@ -1,6 +1,7 @@
 const boot = window.APP_BOOTSTRAP || {};
 
 const DEFAULT_EXPORT_FPS = Number(boot.defaultFps) || 120;
+const DEFAULT_EXPORT_FORMAT = boot.defaultExportFormat || "h264";
 const MAX_EXPORT_FPS = 240;
 const PREVIEW_INPUT_DEBOUNCE_MS = 16;
 const PREVIEW_FRAME_INTERVAL_MS = 16;
@@ -42,6 +43,8 @@ const elements = {
   savePresetButton: document.getElementById("savePresetButton"),
   deletePresetButton: document.getElementById("deletePresetButton"),
   themeSelect: document.getElementById("themeSelect"),
+  exportFormatSelect: document.getElementById("exportFormatSelect"),
+  exportResolutionSelect: document.getElementById("exportResolutionSelect"),
   viewModeSelect: document.getElementById("viewModeSelect"),
   cornerStyleSelect: document.getElementById("cornerStyleSelect"),
   glowStyleSelect: document.getElementById("glowStyleSelect"),
@@ -56,6 +59,7 @@ const elements = {
   showStatsOverlayCheckbox: document.getElementById("showStatsOverlayCheckbox"),
   showChordOverlayCheckbox: document.getElementById("showChordOverlayCheckbox"),
   transparentBackgroundCheckbox: document.getElementById("transparentBackgroundCheckbox"),
+  fitToVisibleNoteRangeCheckbox: document.getElementById("fitToVisibleNoteRangeCheckbox"),
   backgroundColorInput: document.getElementById("backgroundColorInput"),
   idleNoteColorInput: document.getElementById("idleNoteColorInput"),
   activeNoteColorInput: document.getElementById("activeNoteColorInput"),
@@ -119,6 +123,7 @@ const settingBindings = {
   show_chord_overlay: elements.showChordOverlayCheckbox,
   show_playhead: elements.showPlayheadCheckbox,
   transparent_background: elements.transparentBackgroundCheckbox,
+  fit_to_visible_note_range: elements.fitToVisibleNoteRangeCheckbox,
   glow_strength: elements.glowStrengthInput,
   animation_strength: elements.animationStrengthInput,
   animation_speed: elements.animationSpeedInput,
@@ -152,9 +157,7 @@ const scaledSettingFields = new Set([
   "release_fade_duration_sec",
 ]);
 
-const integerSettingFields = new Set([
-  "visible_measure_count",
-]);
+const integerSettingFields = new Set(["visible_measure_count"]);
 
 const booleanSettingFields = new Set([
   "hide_future_notes",
@@ -164,7 +167,12 @@ const booleanSettingFields = new Set([
   "show_chord_overlay",
   "show_playhead",
   "transparent_background",
+  "fit_to_visible_note_range",
 ]);
+
+const exportResolutionPresets = Array.isArray(boot.exportResolutions) ? boot.exportResolutions : [];
+const exportResolutionMap = new Map(exportResolutionPresets.map((preset) => [preset.value, preset]));
+const defaultExportResolution = boot.defaultExportResolution || exportResolutionPresets[0]?.value || "4k_landscape";
 
 function escapeHtml(value) {
   return String(value)
@@ -177,6 +185,35 @@ function escapeHtml(value) {
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function getSelectedExportFormat() {
+  return elements.exportFormatSelect.value || DEFAULT_EXPORT_FORMAT;
+}
+
+function getSelectedExportPreset() {
+  return exportResolutionMap.get(elements.exportResolutionSelect.value)
+    || exportResolutionMap.get(defaultExportResolution)
+    || { value: "4k_landscape", label: "4K 横 3840×2160", width: 3840, height: 2160 };
+}
+
+function updatePreviewAspect() {
+  const preset = getSelectedExportPreset();
+  elements.previewFrame.style.aspectRatio = `${preset.width} / ${preset.height}`;
+}
+
+function syncExportUiState({ queue = false } = {}) {
+  const exportFormat = getSelectedExportFormat();
+  const allowTransparency = exportFormat === "png_sequence";
+  if (!allowTransparency) {
+    elements.transparentBackgroundCheckbox.checked = false;
+  }
+  elements.transparentBackgroundCheckbox.disabled = !allowTransparency;
+  elements.exportButton.textContent = allowTransparency ? "連番PNGを書き出し" : "H.264を書き出し";
+  updatePreviewAspect();
+  if (queue) {
+    queuePreview(true);
+  }
 }
 
 function populateSelect(select, items, selectedValue) {
@@ -302,6 +339,7 @@ function applySettings(settings) {
   updateThemeBadge();
   highlightActivePreset();
   updatePresetActionState();
+  syncExportUiState();
 }
 
 function collectSettings() {
@@ -381,7 +419,7 @@ function renderPresetCards() {
       <div class="preset-card-header">
         <div>
           <span class="preset-card-title">${escapeHtml(themeName)}</span>
-          <span class="preset-card-subtitle">${isSaved ? "保存済みプリセット。ブラウザ版とデスクトップ版の両方で使えます。" : "標準プリセット。ここから好みに寄せて保存できます。"}</span>
+          <span class="preset-card-subtitle">${isSaved ? "保存済みプリセットです。" : "標準プリセットです。"}</span>
         </div>
         <div class="preset-card-meta">
           <span class="preset-card-pill ${isSaved ? "user" : "builtin"}">${isSaved ? "保存済み" : "標準"}</span>
@@ -394,14 +432,12 @@ function renderPresetCards() {
         <span class="preset-swatch" style="background:${settings.active_note_color}"></span>
       </div>
     `;
-
     button.addEventListener("click", () => {
       wrapViewTransition(() => {
         syncSelectionToTheme(themeName);
       });
       queuePreview(true);
     });
-
     elements.themePresetGrid.appendChild(button);
   });
 
@@ -421,22 +457,16 @@ async function saveCurrentPreset() {
   }
 
   elements.savePresetButton.disabled = true;
-
   try {
     const response = await fetch("/api/presets", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: presetName,
-        settings: collectSettings(),
-      }),
+      body: JSON.stringify({ name: presetName, settings: collectSettings() }),
     });
-
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "プリセットの保存に失敗しました。");
     }
-
     syncPresetBootstrap(payload);
     wrapViewTransition(() => {
       refreshThemeChoices(payload.savedName);
@@ -463,17 +493,12 @@ async function deleteSelectedPreset() {
   }
 
   elements.deletePresetButton.disabled = true;
-
   try {
-    const response = await fetch(`/api/presets/${encodeURIComponent(presetName)}`, {
-      method: "DELETE",
-    });
-
+    const response = await fetch(`/api/presets/${encodeURIComponent(presetName)}`, { method: "DELETE" });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "プリセットの削除に失敗しました。");
     }
-
     syncPresetBootstrap(payload);
     wrapViewTransition(() => {
       refreshThemeChoices(boot.defaultTheme);
@@ -526,10 +551,13 @@ async function uploadMidi(file) {
 }
 
 function getPreviewSize() {
-  const previewWidth = Math.max(320, Math.min(1280, Math.round(elements.previewImage.clientWidth || 960)));
+  const preset = getSelectedExportPreset();
+  const aspectRatio = preset.width / Math.max(preset.height, 1);
+  const frameWidth = elements.previewFrame.clientWidth || elements.previewImage.clientWidth || 960;
+  const previewWidth = Math.max(240, Math.min(1280, Math.round(frameWidth)));
   return {
     width: previewWidth,
-    height: Math.round(previewWidth * 9 / 16),
+    height: Math.max(180, Math.round(previewWidth / aspectRatio)),
   };
 }
 
@@ -699,7 +727,10 @@ async function exportVideo() {
   }
 
   const fps = normalizeFpsInput();
-  setStatus(`${fps}FPS で動画を書き出しています...`);
+  const exportFormat = getSelectedExportFormat();
+  const preset = getSelectedExportPreset();
+  const exportLabel = exportFormat === "png_sequence" ? "連番PNG" : "H.264";
+  setStatus(`${exportLabel}を書き出しています... ${fps}FPS / ${preset.width}x${preset.height}`);
   elements.exportButton.disabled = true;
 
   try {
@@ -707,9 +738,10 @@ async function exportVideo() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        format: exportFormat,
         fps,
-        width: 1920,
-        height: 1080,
+        width: preset.width,
+        height: preset.height,
         settings: collectSettings(),
       }),
     });
@@ -727,7 +759,10 @@ async function exportVideo() {
     const blob = await response.blob();
     const disposition = response.headers.get("Content-Disposition") || "";
     const filenameMatch = disposition.match(/filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)\"?/i);
-    const fileName = decodeURIComponent(filenameMatch?.[1] || filenameMatch?.[2] || `${state.fileName || "export"}.mp4`);
+    const defaultExtension = exportFormat === "png_sequence" ? ".zip" : ".mp4";
+    const fileName = decodeURIComponent(
+      filenameMatch?.[1] || filenameMatch?.[2] || `${state.fileName || "export"}${defaultExtension}`,
+    );
     const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = blobUrl;
@@ -736,7 +771,7 @@ async function exportVideo() {
     link.click();
     link.remove();
     URL.revokeObjectURL(blobUrl);
-    setStatus("動画を書き出しました。");
+    setStatus(`${exportLabel}の書き出しが完了しました。`);
   } catch (error) {
     setStatus(error.message);
   } finally {
@@ -756,6 +791,7 @@ function formatTime(seconds) {
 function handleManualStyleChange() {
   markCustomTheme();
   syncThemeAtmosphere(collectSettings());
+  syncExportUiState();
   queuePreview(true);
 }
 
@@ -769,6 +805,8 @@ function installPointerLighting() {
 
 function initialize() {
   populateSelect(elements.themeSelect, boot.choices.themes || [], boot.defaultTheme);
+  populateSelect(elements.exportFormatSelect, boot.exportFormats || [], DEFAULT_EXPORT_FORMAT);
+  populateSelect(elements.exportResolutionSelect, boot.exportResolutions || [], defaultExportResolution);
   populateSelect(elements.viewModeSelect, boot.choices.viewModes || [], boot.defaultSettings.view_mode);
   populateSelect(elements.cornerStyleSelect, boot.choices.corners || [], boot.defaultSettings.corner_style);
   populateSelect(elements.glowStyleSelect, boot.choices.glows || [], boot.defaultSettings.glow_style);
@@ -784,6 +822,7 @@ function initialize() {
   syncSelectionToTheme(boot.defaultTheme);
   updateMeta();
   installPointerLighting();
+  syncExportUiState();
 
   elements.themeSelect.addEventListener("change", () => {
     const selectedTheme = elements.themeSelect.value;
@@ -791,10 +830,17 @@ function initialize() {
       markCustomTheme();
       return;
     }
-
     wrapViewTransition(() => {
       syncSelectionToTheme(selectedTheme);
     });
+    queuePreview(true);
+  });
+
+  elements.exportFormatSelect.addEventListener("change", () => {
+    syncExportUiState({ queue: true });
+  });
+  elements.exportResolutionSelect.addEventListener("change", () => {
+    updatePreviewAspect();
     queuePreview(true);
   });
 
@@ -828,6 +874,7 @@ function initialize() {
     elements.glowColorInput,
     elements.animationAccentColorInput,
     elements.outlineColorInput,
+    elements.textColorInput,
   ].forEach((element) => {
     element.addEventListener("input", handleManualStyleChange);
   });
@@ -863,6 +910,7 @@ function initialize() {
     elements.showStatsOverlayCheckbox,
     elements.showChordOverlayCheckbox,
     elements.transparentBackgroundCheckbox,
+    elements.fitToVisibleNoteRangeCheckbox,
   ].forEach((element) => {
     element.addEventListener("input", handleManualStyleChange);
   });
@@ -882,6 +930,7 @@ function initialize() {
   elements.exportButton.addEventListener("click", exportVideo);
 
   window.addEventListener("resize", () => {
+    updatePreviewAspect();
     queuePreview();
   });
 
