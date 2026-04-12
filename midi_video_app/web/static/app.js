@@ -55,12 +55,14 @@ const elements = {
   showMeasureOverlayCheckbox: document.getElementById("showMeasureOverlayCheckbox"),
   showStatsOverlayCheckbox: document.getElementById("showStatsOverlayCheckbox"),
   showChordOverlayCheckbox: document.getElementById("showChordOverlayCheckbox"),
+  transparentBackgroundCheckbox: document.getElementById("transparentBackgroundCheckbox"),
   backgroundColorInput: document.getElementById("backgroundColorInput"),
   idleNoteColorInput: document.getElementById("idleNoteColorInput"),
   activeNoteColorInput: document.getElementById("activeNoteColorInput"),
   glowColorInput: document.getElementById("glowColorInput"),
   animationAccentColorInput: document.getElementById("animationAccentColorInput"),
   outlineColorInput: document.getElementById("outlineColorInput"),
+  textColorInput: document.getElementById("textColorInput"),
   visibleMeasureCountInput: document.getElementById("visibleMeasureCountInput"),
   noteLengthScaleInput: document.getElementById("noteLengthScaleInput"),
   noteHeightScaleInput: document.getElementById("noteHeightScaleInput"),
@@ -101,6 +103,7 @@ const settingBindings = {
   glow_color: elements.glowColorInput,
   animation_accent_color: elements.animationAccentColorInput,
   outline_color: elements.outlineColorInput,
+  text_color: elements.textColorInput,
   view_mode: elements.viewModeSelect,
   corner_style: elements.cornerStyleSelect,
   glow_style: elements.glowStyleSelect,
@@ -115,6 +118,7 @@ const settingBindings = {
   show_stats_overlay: elements.showStatsOverlayCheckbox,
   show_chord_overlay: elements.showChordOverlayCheckbox,
   show_playhead: elements.showPlayheadCheckbox,
+  transparent_background: elements.transparentBackgroundCheckbox,
   glow_strength: elements.glowStrengthInput,
   animation_strength: elements.animationStrengthInput,
   animation_speed: elements.animationSpeedInput,
@@ -159,6 +163,7 @@ const booleanSettingFields = new Set([
   "show_stats_overlay",
   "show_chord_overlay",
   "show_playhead",
+  "transparent_background",
 ]);
 
 function escapeHtml(value) {
@@ -751,7 +756,7 @@ function formatTime(seconds) {
 function handleManualStyleChange() {
   markCustomTheme();
   syncThemeAtmosphere(collectSettings());
-  queuePreview();
+  queuePreview(true);
 }
 
 function installPointerLighting() {
@@ -857,6 +862,7 @@ function initialize() {
     elements.showMeasureOverlayCheckbox,
     elements.showStatsOverlayCheckbox,
     elements.showChordOverlayCheckbox,
+    elements.transparentBackgroundCheckbox,
   ].forEach((element) => {
     element.addEventListener("input", handleManualStyleChange);
   });

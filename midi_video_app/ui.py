@@ -61,10 +61,6 @@ class MidiVideoApp:
         self._preview_image: ImageTk.PhotoImage | None = None
         self._export_thread: threading.Thread | None = None
         self._updating_style_controls = False
-        self._preview_condition = threading.Condition()
-        self._preview_request: tuple[int, MidiProject, object, float] | None = None
-        self._preview_request_serial = 0
-        self._preview_shutdown = False
 
         self._glow_value_to_label = {value: label for value, label in GLOW_STYLE_CHOICES}
         self._glow_label_to_value = {label: value for value, label in GLOW_STYLE_CHOICES}
@@ -112,6 +108,7 @@ class MidiVideoApp:
             value=self._attack_curve_value_to_label[self.render_settings.attack_fade_curve]
         )
         self.visible_measure_count_var = tk.DoubleVar(value=float(self.render_settings.visible_measure_count))
+        self.transparent_background_var = tk.BooleanVar(value=self.render_settings.transparent_background)
         self.hide_future_notes_var = tk.BooleanVar(value=self.render_settings.hide_future_notes)
         self.show_time_overlay_var = tk.BooleanVar(value=self.render_settings.show_time_overlay)
         self.show_measure_overlay_var = tk.BooleanVar(value=self.render_settings.show_measure_overlay)
@@ -157,6 +154,7 @@ class MidiVideoApp:
             "glow_color": "発光色",
             "animation_accent_color": "アニメ色",
             "outline_color": "輪郭色",
+            "text_color": "文字色",
         }
         self._color_value_vars: dict[str, tk.StringVar] = {}
         self._color_swatches: dict[str, tk.Label] = {}
@@ -164,9 +162,6 @@ class MidiVideoApp:
         self._configure_styles()
         self._build_ui()
         self._sync_style_controls_from_settings(selected_theme=DEFAULT_THEME_NAME)
-        self.root.protocol("WM_DELETE_WINDOW", self._close_window)
-        self._preview_thread = threading.Thread(target=self._preview_worker_loop, daemon=True)
-        self._preview_thread.start()
         self._schedule_playback_tick()
 
     def _configure_styles(self) -> None:
@@ -391,6 +386,7 @@ class MidiVideoApp:
         ttk.Checkbutton(overlay_frame, text="小節ガイド", variable=self.show_measure_overlay_var, command=self._on_toggle_changed).grid(row=1, column=1, sticky="w", pady=(6, 0))
         ttk.Checkbutton(overlay_frame, text="統計表示", variable=self.show_stats_overlay_var, command=self._on_toggle_changed).grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(overlay_frame, text="コード表示", variable=self.show_chord_overlay_var, command=self._on_toggle_changed).grid(row=2, column=1, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(overlay_frame, text="背景透過", variable=self.transparent_background_var, command=self._on_toggle_changed).grid(row=3, column=0, sticky="w", pady=(6, 0))
 
         row += 1
         ttk.Separator(panel).grid(row=row, column=0, columnspan=4, sticky="ew", pady=12)
@@ -455,6 +451,7 @@ class MidiVideoApp:
             "glow_color",
             "animation_accent_color",
             "outline_color",
+            "text_color",
         ):
             self._add_color_control(panel, row, field_name)
             row += 1
@@ -794,6 +791,9 @@ class MidiVideoApp:
             return
 
         default_name = f"{self.project.source_path.stem}_小節切り替え.mp4"
+        export_extension = ".mov" if self.render_settings.transparent_background else ".mp4"
+        export_label = "透過演奏ビュー" if self.render_settings.transparent_background else "演奏ビュー"
+        default_name = f"{self.project.source_path.stem}_{export_label}{export_extension}"
         output_path = filedialog.asksaveasfilename(
             title="MP4の保存先を選択",
             defaultextension=".mp4",
@@ -802,6 +802,8 @@ class MidiVideoApp:
         )
         if not output_path:
             return
+        if self.render_settings.transparent_background and Path(output_path).suffix.lower() != ".mov":
+            output_path = str(Path(output_path).with_suffix(".mov"))
 
         export_settings = clone_render_settings(self.render_settings)
         export_renderer = ProjectRenderer(self.project, export_settings)
@@ -815,7 +817,7 @@ class MidiVideoApp:
 
         def run_export() -> None:
             try:
-                export_video(
+                saved_path = export_video(
                     project=self.project,
                     renderer=export_renderer,
                     output_path=output_path,
@@ -910,6 +912,7 @@ class MidiVideoApp:
         if self._updating_style_controls:
             return
 
+        self.render_settings.transparent_background = bool(self.transparent_background_var.get())
         self.render_settings.hide_future_notes = bool(self.hide_future_notes_var.get())
         self.render_settings.show_time_overlay = bool(self.show_time_overlay_var.get())
         self.render_settings.show_measure_overlay = bool(self.show_measure_overlay_var.get())
@@ -964,6 +967,7 @@ class MidiVideoApp:
         self.attack_fade_style_var.set(self._attack_fade_value_to_label[self.render_settings.attack_fade_style])
         self.attack_fade_curve_var.set(self._attack_curve_value_to_label[self.render_settings.attack_fade_curve])
         self.visible_measure_count_var.set(float(self.render_settings.visible_measure_count))
+        self.transparent_background_var.set(self.render_settings.transparent_background)
         self.hide_future_notes_var.set(self.render_settings.hide_future_notes)
         self.show_time_overlay_var.set(self.render_settings.show_time_overlay)
         self.show_measure_overlay_var.set(self.render_settings.show_measure_overlay)

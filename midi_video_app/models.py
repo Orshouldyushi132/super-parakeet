@@ -49,11 +49,13 @@ class ChordEvent:
 class RenderSettings:
     view_mode: str = "performance"
     background_color: str = "#000000"
+    transparent_background: bool = False
     idle_note_color: str = "#2f2f2f"
     active_note_color: str = "#ffffff"
     glow_color: str = "#d9d9d9"
     animation_accent_color: str = "#7dd3fc"
     outline_color: str = "#ffffff"
+    text_color: str = "#ffffff"
     corner_style: str = "rounded"
     glow_style: str = "soft"
     animation_style: str = "pulse"
@@ -414,6 +416,7 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "visible_measure_count": (1, 8),
     }
     bool_fields = {
+        "transparent_background",
         "hide_future_notes",
         "show_time_overlay",
         "show_measure_overlay",

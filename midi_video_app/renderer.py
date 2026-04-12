@@ -243,10 +243,10 @@ class ProjectRenderer:
             self._draw_active_segment(draw, item.base_rect, item.frame_rect, item.state)
 
         draw.flush()
-        return image.convert("RGB")
+        return image if self.settings.transparent_background else image.convert("RGB")
 
     def _render_performance_frame(self, clamped_time: float, width: int, height: int) -> Image.Image:
-        image = Image.new("RGBA", (width, height), _with_alpha(self.settings.background_color, 255))
+        image = Image.new("RGBA", (width, height), self._background_fill())
         draw = _LayerContext(image)
         glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         glow_draw = _LayerContext(glow_layer)
@@ -396,6 +396,8 @@ class ProjectRenderer:
         for burst_x, burst_y, burst_strength in burst_items:
             self._draw_contact_burst(draw, burst_x, burst_y, lane_height, burst_strength)
 
+        draw.flush()
+
         if self.settings.show_playhead:
             self._draw_playhead(draw, clamped_time, visible_measures, left_padding, top_padding, measure_width, plot_height)
         self._draw_performance_overlays(
@@ -411,8 +413,7 @@ class ProjectRenderer:
             bottom_overlay_height,
         )
 
-        draw.flush()
-        return image.convert("RGB")
+        return image if self.settings.transparent_background else image.convert("RGB")
 
     def _performance_window(self, time_sec: float) -> tuple[int, int]:
         visible_measure_count = max(1, min(len(self.project.measures), int(self.settings.visible_measure_count)))
@@ -492,7 +493,7 @@ class ProjectRenderer:
             boundary_alpha = 150 if measure.index == current_measure.index else 86
             draw.line(
                 (measure_x0, top_padding, measure_x0, top_padding + plot_height),
-                fill=_with_alpha(self.settings.outline_color, boundary_alpha),
+                fill=self._overlay_color(boundary_alpha),
                 width=1,
             )
             for beat_index in range(1, measure.numerator):
@@ -506,11 +507,11 @@ class ProjectRenderer:
             draw.draw.text(
                 (measure_x0 + 4, top_padding - 22),
                 f"{measure.index + 1:03d}",
-                fill=_with_alpha(self.settings.outline_color, 188),
+                fill=self._overlay_color(188),
             )
         draw.line(
             (left_padding + len(visible_measures) * measure_width, top_padding, left_padding + len(visible_measures) * measure_width, top_padding + plot_height),
-            fill=_with_alpha(self.settings.outline_color, 86),
+            fill=self._overlay_color(86),
             width=1,
         )
 
@@ -581,19 +582,19 @@ class ProjectRenderer:
             draw.draw.text(
                 (top_left_x, top_y),
                 f"BAR\n{current_measure.index + 1:03d}",
-                fill=_with_alpha(self.settings.outline_color, 235),
+                fill=self._overlay_color(235),
                 spacing=4,
             )
             draw.draw.text(
                 (top_left_x + 84, top_y),
                 f"BEAT\n{beat_index:02d} {int(beat_fraction * 1000):03d}",
-                fill=_with_alpha(self.settings.outline_color, 235),
+                fill=self._overlay_color(235),
                 spacing=4,
             )
             draw.draw.text(
                 (top_left_x + 194, top_y),
                 f"TIME\n{self._format_clock(time_sec)}",
-                fill=_with_alpha(self.settings.outline_color, 235),
+                fill=self._overlay_color(235),
                 spacing=4,
             )
             self._draw_beat_pips(draw, current_measure, beat_index, top_left_x + 84, top_y + 64)
@@ -612,7 +613,7 @@ class ProjectRenderer:
             draw.draw.multiline_text(
                 (text_x, top_y),
                 stats_text,
-                fill=_with_alpha(self.settings.outline_color, 215),
+                fill=self._overlay_color(215),
                 spacing=4,
             )
 
@@ -621,7 +622,7 @@ class ProjectRenderer:
             draw.draw.text(
                 (left_padding, height - bottom_overlay_height + 22),
                 footer_text,
-                fill=_with_alpha(self.settings.idle_note_color, 170),
+                fill=self._overlay_color(170),
             )
 
         if self.settings.show_chord_overlay:
@@ -634,8 +635,8 @@ class ProjectRenderer:
                 chord_x = width - left_padding - (chord_bbox[2] - chord_bbox[0])
                 chord_y = height - bottom_overlay_height + 10
                 notes_x = width - left_padding - (notes_bbox[2] - notes_bbox[0])
-                draw.draw.text((chord_x, chord_y), chord_text, fill=_with_alpha(self.settings.outline_color, 242))
-                draw.draw.text((notes_x, chord_y + 30), notes_text, fill=_with_alpha(self.settings.outline_color, 198))
+                draw.draw.text((chord_x, chord_y), chord_text, fill=self._overlay_color(242))
+                draw.draw.text((notes_x, chord_y + 30), notes_text, fill=self._overlay_color(198))
 
     def _draw_beat_pips(self, draw: _LayerContext, measure: Measure, beat_index: int, origin_x: float, origin_y: float) -> None:
         pip_width = 24
@@ -675,7 +676,7 @@ class ProjectRenderer:
         if cached is not None:
             return cached
 
-        image = Image.new("RGBA", (width, height), _with_alpha(self.settings.background_color, 255))
+        image = Image.new("RGBA", (width, height), self._background_fill())
         draw = _LayerContext(image)
 
         horizontal_padding = width * self.settings.horizontal_padding_ratio
@@ -717,6 +718,7 @@ class ProjectRenderer:
         settings = self.settings
         return (
             settings.background_color,
+            settings.transparent_background,
             settings.idle_note_color,
             settings.outline_color,
             settings.corner_style,
@@ -726,6 +728,14 @@ class ProjectRenderer:
             settings.vertical_padding_ratio,
             settings.idle_outline_width,
         )
+
+    def _background_fill(self) -> tuple[int, int, int, int]:
+        if self.settings.transparent_background:
+            return 0, 0, 0, 0
+        return _with_alpha(self.settings.background_color, 255)
+
+    def _overlay_color(self, alpha: int) -> tuple[int, int, int, int]:
+        return _with_alpha(self.settings.text_color, alpha)
 
     def _draw_idle_segment(self, draw: _LayerContext, rect: tuple[float, float, float, float]) -> None:
         radius = self._rect_radius(rect)

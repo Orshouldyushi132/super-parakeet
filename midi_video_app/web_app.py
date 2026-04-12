@@ -200,9 +200,10 @@ def export_project(project_id: str):
     width = _coerce_int(payload.get("width"), 1920, 320, 3840)
     height = _coerce_int(payload.get("height"), 1080, 180, 2160)
 
-    output_path = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}.mp4"
+    export_suffix = ".mov" if settings.transparent_background else ".mp4"
+    output_path = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}{export_suffix}"
     renderer = ProjectRenderer(stored_project.project, settings)
-    export_video(
+    final_output_path = export_video(
         project=stored_project.project,
         renderer=renderer,
         output_path=output_path,
@@ -211,9 +212,12 @@ def export_project(project_id: str):
         fps=fps,
     )
 
-    download_name = f"{Path(stored_project.original_name).stem}_演奏ビュー.mp4"
-    response = send_file(output_path, as_attachment=True, download_name=download_name, mimetype="video/mp4")
-    response.call_on_close(lambda: output_path.unlink(missing_ok=True))
+    extension = ".mov" if settings.transparent_background else ".mp4"
+    mime_type = "video/quicktime" if settings.transparent_background else "video/mp4"
+    suffix_label = "透過演奏ビュー" if settings.transparent_background else "演奏ビュー"
+    download_name = f"{Path(stored_project.original_name).stem}_{suffix_label}{extension}"
+    response = send_file(final_output_path, as_attachment=True, download_name=download_name, mimetype=mime_type)
+    response.call_on_close(lambda: final_output_path.unlink(missing_ok=True))
     return response
 
 

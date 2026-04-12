@@ -26,6 +26,9 @@ def export_video(
     progress_callback: ProgressCallback | None = None,
 ) -> Path:
     destination = Path(output_path)
+    alpha_export = bool(getattr(renderer.settings, "transparent_background", False))
+    if alpha_export and destination.suffix.lower() != ".mov":
+        destination = destination.with_suffix(".mov")
     total_frames = max(1, math.ceil(project.duration_sec * fps))
     destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -35,20 +38,36 @@ def export_video(
     # Windows + imageio-ffmpeg can fail when ffmpeg receives a non-ASCII output filename.
     # Render to a temporary ASCII-only path first, then move the finished MP4 to the user path.
     with tempfile.TemporaryDirectory(prefix="midi_video_export_") as temp_dir:
-        temp_output = Path(temp_dir) / "export.mp4"
+        temp_output = Path(temp_dir) / ("export.mov" if alpha_export else "export.mp4")
 
-        with imageio.get_writer(
-            temp_output,
-            fps=fps,
-            codec="libx264",
-            quality=8,
-            macro_block_size=None,
-            ffmpeg_log_level="error",
-        ) as writer:
+        writer_kwargs = {
+            "fps": fps,
+            "macro_block_size": None,
+            "ffmpeg_log_level": "error",
+        }
+        if alpha_export:
+            writer_kwargs.update(
+                {
+                    "codec": "png",
+                    "pixelformat": "rgba",
+                }
+            )
+        else:
+            writer_kwargs.update(
+                {
+                    "codec": "libx264",
+                    "quality": 8,
+                }
+            )
+
+        with imageio.get_writer(temp_output, **writer_kwargs) as writer:
             for frame_index in range(total_frames):
                 current_time = min(frame_index / fps, max(project.duration_sec - 1e-6, 0.0))
                 frame = renderer.render_frame(current_time, width, height)
-                writer.append_data(np.asarray(frame))
+                if alpha_export:
+                    writer.append_data(np.asarray(frame.convert("RGBA")))
+                else:
+                    writer.append_data(np.asarray(frame.convert("RGB")))
 
                 if progress_callback:
                     progress_callback((frame_index + 1) / total_frames, f"動画を書き出し中... {frame_index + 1}/{total_frames}")
