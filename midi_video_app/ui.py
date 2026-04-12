@@ -61,6 +61,10 @@ class MidiVideoApp:
         self._preview_image: ImageTk.PhotoImage | None = None
         self._export_thread: threading.Thread | None = None
         self._updating_style_controls = False
+        self._preview_condition = threading.Condition()
+        self._preview_request: tuple[int, MidiProject, object, float] | None = None
+        self._preview_request_serial = 0
+        self._preview_shutdown = False
 
         self._glow_value_to_label = {value: label for value, label in GLOW_STYLE_CHOICES}
         self._glow_label_to_value = {label: value for value, label in GLOW_STYLE_CHOICES}
@@ -160,6 +164,9 @@ class MidiVideoApp:
         self._configure_styles()
         self._build_ui()
         self._sync_style_controls_from_settings(selected_theme=DEFAULT_THEME_NAME)
+        self.root.protocol("WM_DELETE_WINDOW", self._close_window)
+        self._preview_thread = threading.Thread(target=self._preview_worker_loop, daemon=True)
+        self._preview_thread.start()
         self._schedule_playback_tick()
 
     def _configure_styles(self) -> None:
