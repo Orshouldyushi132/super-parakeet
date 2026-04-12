@@ -27,8 +27,8 @@ def export_video(
 ) -> Path:
     destination = Path(output_path)
     alpha_export = bool(getattr(renderer.settings, "transparent_background", False))
-    if alpha_export and destination.suffix.lower() != ".mov":
-        destination = destination.with_suffix(".mov")
+    if destination.suffix.lower() != ".mp4":
+        destination = destination.with_suffix(".mp4")
     total_frames = max(1, math.ceil(project.duration_sec * fps))
     destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -38,7 +38,7 @@ def export_video(
     # Windows + imageio-ffmpeg can fail when ffmpeg receives a non-ASCII output filename.
     # Render to a temporary ASCII-only path first, then move the finished MP4 to the user path.
     with tempfile.TemporaryDirectory(prefix="midi_video_export_") as temp_dir:
-        temp_output = Path(temp_dir) / ("export.mov" if alpha_export else "export.mp4")
+        temp_output = Path(temp_dir) / "export.mp4"
 
         writer_kwargs = {
             "fps": fps,

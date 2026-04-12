@@ -791,7 +791,7 @@ class MidiVideoApp:
             return
 
         default_name = f"{self.project.source_path.stem}_小節切り替え.mp4"
-        export_extension = ".mov" if self.render_settings.transparent_background else ".mp4"
+        export_extension = ".mp4"
         export_label = "透過演奏ビュー" if self.render_settings.transparent_background else "演奏ビュー"
         default_name = f"{self.project.source_path.stem}_{export_label}{export_extension}"
         output_path = filedialog.asksaveasfilename(
@@ -802,8 +802,8 @@ class MidiVideoApp:
         )
         if not output_path:
             return
-        if self.render_settings.transparent_background and Path(output_path).suffix.lower() != ".mov":
-            output_path = str(Path(output_path).with_suffix(".mov"))
+        if Path(output_path).suffix.lower() != ".mp4":
+            output_path = str(Path(output_path).with_suffix(".mp4"))
 
         export_settings = clone_render_settings(self.render_settings)
         export_renderer = ProjectRenderer(self.project, export_settings)

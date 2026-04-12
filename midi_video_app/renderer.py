@@ -15,20 +15,36 @@ except ImportError:  # pragma: no cover - optional dependency
     aggdraw = None
 
 
-_FONT_CANDIDATES = (
-    ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"),
-    ("C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf"),
-    ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
-    ("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
-    ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
-)
+_FONT_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "light": (
+        "C:/Windows/Fonts/YuGothL.ttc",
+        "C:/Windows/Fonts/meiryo.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "DejaVuSans.ttf",
+    ),
+    "regular": (
+        "C:/Windows/Fonts/YuGothR.ttc",
+        "C:/Windows/Fonts/meiryo.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "DejaVuSans.ttf",
+    ),
+    "bold": (
+        "C:/Windows/Fonts/YuGothB.ttc",
+        "C:/Windows/Fonts/meiryob.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "DejaVuSans-Bold.ttf",
+    ),
+}
 
 
-@lru_cache(maxsize=48)
-def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+@lru_cache(maxsize=96)
+def _load_font(size: int, weight: str = "regular") -> ImageFont.ImageFont:
     clamped_size = max(10, int(size))
-    for regular_path, bold_path in _FONT_CANDIDATES:
-        font_path = bold_path if bold else regular_path
+    candidate_paths = _FONT_CANDIDATES.get(weight, _FONT_CANDIDATES["regular"])
+    for font_path in candidate_paths:
         try:
             return ImageFont.truetype(font_path, clamped_size)
         except OSError:
@@ -282,8 +298,8 @@ class ProjectRenderer:
 
         horizontal_padding = width * max(0.025, self.settings.horizontal_padding_ratio * 0.55)
         vertical_padding = height * max(0.04, self.settings.vertical_padding_ratio * 0.5)
-        top_overlay_height = 138 * overlay_scale if self.settings.show_time_overlay or self.settings.show_stats_overlay else 54 * overlay_scale
-        bottom_overlay_height = 126 * overlay_scale if self.settings.show_chord_overlay else 56 * overlay_scale
+        top_overlay_height = 104 * overlay_scale if self.settings.show_time_overlay or self.settings.show_stats_overlay else 42 * overlay_scale
+        bottom_overlay_height = 112 * overlay_scale if self.settings.show_chord_overlay else 46 * overlay_scale
         left_padding = horizontal_padding
         right_padding = horizontal_padding
         top_padding = vertical_padding + top_overlay_height
@@ -510,7 +526,7 @@ class ProjectRenderer:
         plot_height: float,
         current_measure: Measure,
     ) -> None:
-        label_font = _load_font(max(12, int(plot_height * 0.028)), bold=True)
+        label_font = _load_font(max(12, int(plot_height * 0.025)), "light")
         for slot_index, measure in enumerate(visible_measures):
             measure_x0 = left_padding + slot_index * measure_width
             measure_x1 = measure_x0 + measure_width
@@ -528,13 +544,13 @@ class ProjectRenderer:
                     fill=_with_alpha(self.settings.idle_note_color, 44),
                     width=1,
                 )
-            draw.draw.text(
+            self._draw_overlay_text(
+                draw,
                 (measure_x0 + 6, top_padding - (getattr(label_font, "size", 16)) - 10),
                 f"{measure.index + 1:03d}",
-                fill=self._overlay_color(188),
-                font=label_font,
-                stroke_width=max(1, int(getattr(label_font, "size", 16) * 0.08)),
-                stroke_fill=self._overlay_stroke_color(176),
+                label_font,
+                self._overlay_color(144),
+                shadow_alpha=96,
             )
         draw.line(
             (left_padding + len(visible_measures) * measure_width, top_padding, left_padding + len(visible_measures) * measure_width, top_padding + plot_height),
@@ -561,47 +577,25 @@ class ProjectRenderer:
         beat_ratio = (self._current_beat_in_measure(current_measure, time_sec) - 1.0) / max(current_measure.numerator, 1)
         playhead_x = left_padding + slot_index * measure_width + measure_width * _clamp(beat_ratio)
         overlay_scale = self._overlay_scale(measure_width * max(1, len(visible_measures)), plot_height)
-        line_top = top_padding - 28 * overlay_scale
-        line_bottom = top_padding + plot_height + 24 * overlay_scale
-        glow_color = _with_alpha(self.settings.animation_accent_color, 58)
-        mid_glow_color = _with_alpha(self.settings.animation_accent_color, 112)
-        playhead_color = _with_alpha(self.settings.animation_accent_color, 236)
-        highlight_color = _with_alpha("#ffffff", 170)
+        line_top = top_padding - 12 * overlay_scale
+        line_bottom = top_padding + plot_height + 12 * overlay_scale
+        glow_color = _with_alpha(self.settings.animation_accent_color, 42)
+        mid_glow_color = _with_alpha(self.settings.animation_accent_color, 88)
+        playhead_color = _with_alpha(self.settings.animation_accent_color, 220)
 
         draw.line(
             (playhead_x, line_top, playhead_x, line_bottom),
             fill=glow_color,
-            width=max(4, int(round(12 * overlay_scale))),
-        )
-        draw.line(
-            (playhead_x, line_top, playhead_x, line_bottom),
-            fill=mid_glow_color,
             width=max(2, int(round(6 * overlay_scale))),
         )
         draw.line(
             (playhead_x, line_top, playhead_x, line_bottom),
-            fill=playhead_color,
+            fill=mid_glow_color,
             width=max(2, int(round(3 * overlay_scale))),
         )
-
-        cap_half_width = max(7.0, 12.0 * overlay_scale)
-        cap_height = max(10.0, 16.0 * overlay_scale)
-        draw.polygon(
-            [
-                (playhead_x, line_top - cap_height),
-                (playhead_x - cap_half_width, line_top - cap_height * 0.12),
-                (playhead_x + cap_half_width, line_top - cap_height * 0.12),
-            ],
+        draw.line(
+            (playhead_x, line_top, playhead_x, line_bottom),
             fill=playhead_color,
-        )
-        draw.line(
-            (playhead_x, line_top - cap_height * 0.12, playhead_x, line_top + cap_height * 0.15),
-            fill=highlight_color,
-            width=max(1, int(round(2 * overlay_scale))),
-        )
-        draw.line(
-            (playhead_x, line_bottom - cap_height * 0.5, playhead_x, line_bottom + cap_height * 0.14),
-            fill=highlight_color,
             width=max(1, int(round(2 * overlay_scale))),
         )
 
@@ -641,61 +635,64 @@ class ProjectRenderer:
         top_overlay_height: float,
         bottom_overlay_height: float,
     ) -> None:
-        current_beat = self._current_beat_in_measure(current_measure, time_sec)
-        beat_index = max(1, min(current_measure.numerator, int(max(0.0, current_beat - 1e-6)) + 1))
-        beat_fraction = max(0.0, current_beat - int(current_beat))
+        beat_index, beat_fraction = self._beat_display_state(current_measure, time_sec)
         beat_millis = int(_clamp(beat_fraction, 0.0, 0.999) * 1000)
         top_left_x = left_padding
         overlay_scale = self._overlay_scale(width, height)
-        top_y = vertical_padding + 6 * overlay_scale
-        panel_gap = 12 * overlay_scale
-        panel_height = 74 * overlay_scale
-        panel_radius = 18 * overlay_scale
-        panel_padding_x = 16 * overlay_scale
-        panel_padding_y = 10 * overlay_scale
-        label_font = _load_font(int(16 * overlay_scale), bold=True)
-        value_font = _load_font(int(34 * overlay_scale), bold=True)
-        detail_bold_font = _load_font(int(18 * overlay_scale), bold=True)
-        chord_font = _load_font(int(52 * overlay_scale), bold=True)
-        chord_notes_font = _load_font(int(20 * overlay_scale), bold=False)
-        footer_font = _load_font(int(15 * overlay_scale), bold=True)
-        stroke_width = max(1, int(round(2 * overlay_scale)))
+        top_y = vertical_padding + 10 * overlay_scale
+        block_gap = 54 * overlay_scale
+        divider_gap = 22 * overlay_scale
+        line_height = 16 * overlay_scale
+        label_font = _load_font(int(15 * overlay_scale), "light")
+        value_font = _load_font(int(34 * overlay_scale), "regular")
+        stat_label_font = _load_font(int(14 * overlay_scale), "light")
+        stat_value_font = _load_font(int(20 * overlay_scale), "regular")
+        chord_label_font = _load_font(int(16 * overlay_scale), "light")
+        chord_font = _load_font(int(56 * overlay_scale), "regular")
+        chord_notes_font = _load_font(int(21 * overlay_scale), "light")
+        footer_font = _load_font(int(14 * overlay_scale), "light")
+        label_y = top_y
+        value_y = top_y + 18 * overlay_scale
 
         if self.settings.show_time_overlay:
-            cards = (
-                ("BAR", f"{current_measure.index + 1:03d}", 154 * overlay_scale),
-                ("BEAT", f"{beat_index:02d}.{beat_millis:03d}", 190 * overlay_scale),
-                ("TIME", self._format_clock(time_sec), 248 * overlay_scale),
+            blocks = (
+                ("小節", f"{current_measure.index + 1:03d}"),
+                ("拍", f"{beat_index:02d}.{beat_millis:03d}"),
+                ("時間", self._format_clock(time_sec)),
             )
-            card_x = top_left_x
-            for index, (label, value, card_width) in enumerate(cards):
-                rect = (card_x, top_y, card_x + card_width, top_y + panel_height)
-                self._draw_hud_panel(
-                    draw,
-                    rect,
-                    radius=panel_radius,
-                    accent=index == 1,
-                    fill_alpha=164 if index == 1 else 138,
-                    outline_alpha=190 if index == 1 else 128,
-                )
+            block_x = top_left_x
+            beat_block_x = top_left_x
+            for index, (label, value) in enumerate(blocks):
+                label_bbox = draw.draw.textbbox((0, 0), label, font=label_font)
+                value_bbox = draw.draw.textbbox((0, 0), value, font=value_font)
+                block_width = max(label_bbox[2] - label_bbox[0], value_bbox[2] - value_bbox[0])
+                if index == 1:
+                    beat_block_x = block_x
                 self._draw_overlay_text(
                     draw,
-                    (rect[0] + panel_padding_x, rect[1] + panel_padding_y - 1 * overlay_scale),
+                    (block_x, label_y),
                     label,
                     label_font,
-                    self._overlay_color(202),
-                    stroke_width=max(1, stroke_width - 1),
+                    self._overlay_color(170 if index != 1 else 194),
+                    shadow_alpha=92,
                 )
                 self._draw_overlay_text(
                     draw,
-                    (rect[0] + panel_padding_x, rect[1] + panel_padding_y + 18 * overlay_scale),
+                    (block_x, value_y),
                     value,
                     value_font,
-                    self._overlay_color(245),
-                    stroke_width=stroke_width,
+                    self._overlay_color(240 if index != 1 else 248),
+                    shadow_alpha=116,
                 )
-                card_x += card_width + panel_gap
-            self._draw_beat_pips(draw, current_measure, beat_index, top_left_x + 168 * overlay_scale, top_y + panel_height + 14 * overlay_scale, overlay_scale)
+                if index < len(blocks) - 1:
+                    divider_x = block_x + block_width + divider_gap
+                    draw.line(
+                        (divider_x, label_y + 2 * overlay_scale, divider_x, value_y + line_height + 2 * overlay_scale),
+                        fill=self._overlay_color(44),
+                        width=1,
+                    )
+                block_x += block_width + block_gap
+            self._draw_beat_pips(draw, current_measure, beat_index, beat_block_x, value_y + 40 * overlay_scale, overlay_scale)
 
         if self.settings.show_stats_overlay:
             played_notes = bisect_right(self._note_start_seconds, time_sec + 1e-9)
@@ -703,117 +700,106 @@ class ProjectRenderer:
             active_chord = self.get_chord_for_time(time_sec)
             active_note_count = active_chord.active_note_count if active_chord else 0
             stats_lines = (
-                ("PLAYED", f"{played_notes}/{total_notes} ({played_notes / total_notes:.1%})"),
-                ("ACTIVE", f"{active_note_count} notes"),
+                ("再生済み", f"{played_notes}/{total_notes} ({played_notes / total_notes:.1%})"),
+                ("同時発音", f"{active_note_count} ノート"),
             )
-            line_gap = 6 * overlay_scale
-            content_width = 0.0
+            line_y = top_y
             for label, value in stats_lines:
-                label_bbox = draw.draw.textbbox((0, 0), label, font=label_font)
-                value_bbox = draw.draw.textbbox((0, 0), value, font=detail_bold_font)
-                content_width = max(content_width, (label_bbox[2] - label_bbox[0]), (value_bbox[2] - value_bbox[0]))
-            stats_width = max(252 * overlay_scale, content_width + panel_padding_x * 2)
-            stats_height = panel_padding_y * 2 + len(stats_lines) * (28 * overlay_scale) + (len(stats_lines) - 1) * line_gap
-            rect = (width - left_padding - stats_width, top_y, width - left_padding, top_y + stats_height)
-            self._draw_hud_panel(draw, rect, radius=panel_radius, accent=False, fill_alpha=138, outline_alpha=132)
-            line_y = rect[1] + panel_padding_y
-            for label, value in stats_lines:
+                value_bbox = draw.draw.textbbox((0, 0), value, font=stat_value_font)
+                value_x = width - left_padding - (value_bbox[2] - value_bbox[0])
+                label_bbox = draw.draw.textbbox((0, 0), label, font=stat_label_font)
+                label_x = width - left_padding - (label_bbox[2] - label_bbox[0])
                 self._draw_overlay_text(
                     draw,
-                    (rect[0] + panel_padding_x, line_y),
+                    (label_x, line_y),
                     label,
-                    label_font,
-                    self._overlay_color(188),
-                    stroke_width=max(1, stroke_width - 1),
+                    stat_label_font,
+                    self._overlay_color(156),
+                    shadow_alpha=84,
                 )
                 self._draw_overlay_text(
                     draw,
-                    (rect[0] + panel_padding_x, line_y + 16 * overlay_scale),
+                    (value_x, line_y + 16 * overlay_scale),
                     value,
-                    detail_bold_font,
-                    self._overlay_color(240),
-                    stroke_width=max(1, stroke_width - 1),
+                    stat_value_font,
+                    self._overlay_color(232),
+                    shadow_alpha=100,
                 )
-                line_y += 28 * overlay_scale + line_gap
+                line_y += 42 * overlay_scale
 
         if self.settings.show_measure_overlay and visible_measures:
-            footer_text = f"Measures visible: {len(visible_measures)}"
-            footer_bbox = draw.draw.textbbox((0, 0), footer_text, font=footer_font)
-            footer_width = (footer_bbox[2] - footer_bbox[0]) + panel_padding_x * 2
-            footer_height = (footer_bbox[3] - footer_bbox[1]) + panel_padding_y * 2
-            footer_rect = (
-                left_padding,
-                height - bottom_overlay_height + 22 * overlay_scale,
-                left_padding + footer_width,
-                height - bottom_overlay_height + 22 * overlay_scale + footer_height,
-            )
-            self._draw_hud_panel(draw, footer_rect, radius=panel_radius * 0.8, accent=False, fill_alpha=120, outline_alpha=118)
+            footer_text = f"表示小節 {len(visible_measures)}"
             self._draw_overlay_text(
                 draw,
-                (footer_rect[0] + panel_padding_x, footer_rect[1] + panel_padding_y - 1 * overlay_scale),
+                (left_padding, height - bottom_overlay_height + 28 * overlay_scale),
                 footer_text,
                 footer_font,
-                self._overlay_color(204),
-                stroke_width=max(1, stroke_width - 1),
+                self._overlay_color(154),
+                shadow_alpha=86,
             )
 
         if self.settings.show_chord_overlay:
             chord = self.get_chord_for_time(time_sec)
             chord_text = chord.chord_name if chord is not None else "N.C."
-            notes_text = "Notes: " + (" ".join(chord.note_names) if chord is not None else "-")
-            chord_label = "CHORD"
-            chord_label_bbox = draw.draw.textbbox((0, 0), chord_label, font=label_font)
+            notes_text = "Notes " + (" ".join(chord.note_names) if chord is not None else "-")
+            chord_label = "コード"
+            chord_label_bbox = draw.draw.textbbox((0, 0), chord_label, font=chord_label_font)
             chord_bbox = draw.draw.textbbox((0, 0), chord_text, font=chord_font)
             notes_bbox = draw.draw.textbbox((0, 0), notes_text, font=chord_notes_font)
-            chord_width = max(
-                292 * overlay_scale,
+            chord_block_width = max(
                 chord_label_bbox[2] - chord_label_bbox[0],
                 chord_bbox[2] - chord_bbox[0],
                 notes_bbox[2] - notes_bbox[0],
             )
-            panel_width = chord_width + panel_padding_x * 2
-            panel_height_chord = 116 * overlay_scale
-            chord_rect = (
-                width - left_padding - panel_width,
-                height - bottom_overlay_height + 14 * overlay_scale,
-                width - left_padding,
-                height - bottom_overlay_height + 14 * overlay_scale + panel_height_chord,
+            chord_x = width - left_padding - chord_block_width
+            chord_y = height - bottom_overlay_height + 10 * overlay_scale
+            draw.line(
+                (chord_x, chord_y - 10 * overlay_scale, chord_x + min(chord_block_width, 108 * overlay_scale), chord_y - 10 * overlay_scale),
+                fill=_with_alpha(self.settings.animation_accent_color, 136),
+                width=max(1, int(round(2 * overlay_scale))),
             )
-            self._draw_hud_panel(draw, chord_rect, radius=panel_radius, accent=True, fill_alpha=160, outline_alpha=210)
             self._draw_overlay_text(
                 draw,
-                (chord_rect[0] + panel_padding_x, chord_rect[1] + panel_padding_y - 2 * overlay_scale),
+                (chord_x, chord_y),
                 chord_label,
-                label_font,
-                self._overlay_color(196),
-                stroke_width=max(1, stroke_width - 1),
+                chord_label_font,
+                self._overlay_color(170),
+                shadow_alpha=96,
             )
             self._draw_overlay_text(
                 draw,
-                (chord_rect[0] + panel_padding_x, chord_rect[1] + panel_padding_y + 16 * overlay_scale),
+                (chord_x, chord_y + 18 * overlay_scale),
                 chord_text,
                 chord_font,
-                self._overlay_color(245),
-                stroke_width=stroke_width,
+                self._overlay_color(244),
+                shadow_alpha=118,
             )
             self._draw_overlay_text(
                 draw,
-                (chord_rect[0] + panel_padding_x, chord_rect[1] + panel_padding_y + 76 * overlay_scale),
+                (chord_x, chord_y + 76 * overlay_scale),
                 notes_text,
                 chord_notes_font,
-                self._overlay_color(208),
-                stroke_width=max(1, stroke_width - 1),
+                self._overlay_color(176),
+                shadow_alpha=88,
             )
 
     def _draw_beat_pips(self, draw: _LayerContext, measure: Measure, beat_index: int, origin_x: float, origin_y: float, overlay_scale: float = 1.0) -> None:
-        pip_width = max(14, int(round(24 * overlay_scale)))
-        gap = max(4, int(round(8 * overlay_scale)))
-        pip_height = max(5, int(round(8 * overlay_scale)))
+        pip_width = max(16, int(round(26 * overlay_scale)))
+        gap = max(5, int(round(10 * overlay_scale)))
+        pip_height = max(4, int(round(6 * overlay_scale)))
         for index in range(measure.numerator):
             x0 = origin_x + index * (pip_width + gap)
-            color = self.settings.outline_color if index + 1 <= beat_index else self.settings.idle_note_color
-            alpha = 210 if index + 1 == beat_index else 115 if index + 1 < beat_index else 72
+            color = self.settings.animation_accent_color if index + 1 == beat_index else self.settings.outline_color if index + 1 < beat_index else self.settings.idle_note_color
+            alpha = 214 if index + 1 == beat_index else 126 if index + 1 < beat_index else 54
             draw.rectangle((x0, origin_y, x0 + pip_width, origin_y + pip_height), fill=_with_alpha(color, alpha))
+
+    def _beat_display_state(self, measure: Measure, time_sec: float) -> tuple[int, float]:
+        beat_progress = max(0.0, self._current_beat_in_measure(measure, time_sec) - 1.0)
+        whole_beats_elapsed = int(math.floor(beat_progress + 1e-9))
+        clamped_elapsed = min(max(0, whole_beats_elapsed), max(0, measure.numerator - 1))
+        beat_index = clamped_elapsed + 1
+        beat_fraction = _clamp(beat_progress - whole_beats_elapsed, 0.0, 0.999999)
+        return beat_index, beat_fraction
 
     def _current_beat_in_measure(self, measure: Measure, time_sec: float) -> float:
         measure_duration = max(1e-9, measure.end_sec - measure.start_sec)
@@ -943,15 +929,22 @@ class ProjectRenderer:
         text: str,
         font: ImageFont.ImageFont,
         fill: tuple[int, int, int, int],
-        stroke_width: int = 1,
+        shadow_alpha: int = 96,
     ) -> None:
+        shadow_offset = max(1, int(round(getattr(font, "size", 16) * 0.06)))
+        if shadow_alpha > 0:
+            shadow_fill = self._overlay_stroke_color(min(255, shadow_alpha))
+            draw.draw.text(
+                (position[0], position[1] + shadow_offset),
+                text,
+                fill=shadow_fill,
+                font=font,
+            )
         draw.draw.text(
             position,
             text,
             fill=fill,
             font=font,
-            stroke_width=max(0, stroke_width),
-            stroke_fill=self._overlay_stroke_color(min(255, fill[3])),
         )
 
     def _draw_idle_segment(self, draw: _LayerContext, rect: tuple[float, float, float, float]) -> None:
