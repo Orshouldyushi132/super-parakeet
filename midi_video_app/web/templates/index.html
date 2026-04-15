@@ -165,7 +165,6 @@
               <label class="toggle-card"><input id="showMeasureOverlayCheckbox" type="checkbox"><span>小節ガイド</span></label>
               <label class="toggle-card"><input id="showStatsOverlayCheckbox" type="checkbox"><span>統計表示</span></label>
               <label class="toggle-card"><input id="showChordOverlayCheckbox" type="checkbox"><span>コード表示</span></label>
-              <label class="toggle-card"><input id="transparentBackgroundCheckbox" type="checkbox"><span>背景透過</span></label>
               <label class="toggle-card"><input id="fitToVisibleNoteRangeCheckbox" type="checkbox"><span>表示中の音域だけに自動フィット</span></label>
             </div>
           </section>
@@ -329,15 +328,27 @@
                 <select id="exportFormatSelect"></select>
               </label>
               <label class="field">
+                <span>動画の向き</span>
+                <select id="exportOrientationSelect"></select>
+              </label>
+              <label class="field">
                 <span>解像度</span>
                 <select id="exportResolutionSelect"></select>
+              </label>
+              <label class="field">
+                <span>背景透過</span>
+                <div class="toggle-card toggle-card-compact">
+                  <input id="transparentBackgroundCheckbox" type="checkbox">
+                  <span>有効にする</span>
+                </div>
               </label>
             </div>
             <label class="field">
               <span>FPS</span>
               <input id="fpsInput" type="number" min="1" max="240" value="120">
             </label>
-            <p>初期値は 120FPS です。必要に応じて変更できます。</p>
+            <p id="exportResolutionSummary">3840 x 2160 / 横動画</p>
+            <p id="exportHintText">初期値は 4K / 横動画 / 120FPS です。背景透過は MOV と連番PNG で使えます。</p>
           </div>
         </aside>
       </div>

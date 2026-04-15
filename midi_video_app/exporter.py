@@ -18,8 +18,13 @@ from .renderer import ProjectRenderer
 ProgressCallback = Callable[[float, str], None]
 
 EXPORT_FORMAT_H264 = "h264"
+EXPORT_FORMAT_MOV = "mov"
 EXPORT_FORMAT_PNG_SEQUENCE = "png_sequence"
 DEFAULT_EXPORT_FORMAT = EXPORT_FORMAT_H264
+
+EXPORT_ORIENTATION_LANDSCAPE = "landscape"
+EXPORT_ORIENTATION_PORTRAIT = "portrait"
+DEFAULT_EXPORT_ORIENTATION = EXPORT_ORIENTATION_LANDSCAPE
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,26 +34,63 @@ class ExportResolutionPreset:
     width: int
     height: int
 
+    def dimensions(self, orientation: str) -> tuple[int, int]:
+        normalized_orientation = normalize_export_orientation(orientation)
+        if normalized_orientation == EXPORT_ORIENTATION_PORTRAIT:
+            return self.height, self.width
+        return self.width, self.height
+
 
 EXPORT_FORMAT_CHOICES: tuple[tuple[str, str], ...] = (
-    (EXPORT_FORMAT_H264, "H.264"),
+    (EXPORT_FORMAT_H264, "H.264 MP4"),
+    (EXPORT_FORMAT_MOV, "MOV"),
     (EXPORT_FORMAT_PNG_SEQUENCE, "連番PNG"),
 )
 
-EXPORT_RESOLUTION_PRESETS: tuple[ExportResolutionPreset, ...] = (
-    ExportResolutionPreset("4k_landscape", "4K 横 3840×2160", 3840, 2160),
-    ExportResolutionPreset("4k_portrait", "4K 縦 2160×3840", 2160, 3840),
-    ExportResolutionPreset("1080p_landscape", "1080p 横 1920×1080", 1920, 1080),
-    ExportResolutionPreset("1080p_portrait", "1080p 縦 1080×1920", 1080, 1920),
+EXPORT_ORIENTATION_CHOICES: tuple[tuple[str, str], ...] = (
+    (EXPORT_ORIENTATION_LANDSCAPE, "横動画"),
+    (EXPORT_ORIENTATION_PORTRAIT, "縦動画"),
 )
-DEFAULT_EXPORT_RESOLUTION = "4k_landscape"
+
+EXPORT_RESOLUTION_PRESETS: tuple[ExportResolutionPreset, ...] = (
+    ExportResolutionPreset("4k", "4K", 3840, 2160),
+    ExportResolutionPreset("1440p", "1440p", 2560, 1440),
+    ExportResolutionPreset("1080p", "1080p", 1920, 1080),
+    ExportResolutionPreset("720p", "720p", 1280, 720),
+)
+DEFAULT_EXPORT_RESOLUTION = "4k"
+
+EXPORT_FORMAT_VALUES = {value for value, _ in EXPORT_FORMAT_CHOICES}
+EXPORT_ORIENTATION_VALUES = {value for value, _ in EXPORT_ORIENTATION_CHOICES}
 EXPORT_RESOLUTION_BY_VALUE = {preset.value: preset for preset in EXPORT_RESOLUTION_PRESETS}
+
+
+def normalize_export_format(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in EXPORT_FORMAT_VALUES:
+        return normalized
+    return DEFAULT_EXPORT_FORMAT
+
+
+def normalize_export_orientation(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in EXPORT_ORIENTATION_VALUES:
+        return normalized
+    return DEFAULT_EXPORT_ORIENTATION
 
 
 def get_export_resolution_preset(value: str | None) -> ExportResolutionPreset:
     if value and value in EXPORT_RESOLUTION_BY_VALUE:
         return EXPORT_RESOLUTION_BY_VALUE[value]
     return EXPORT_RESOLUTION_BY_VALUE[DEFAULT_EXPORT_RESOLUTION]
+
+
+def get_export_dimensions(
+    resolution_value: str | None,
+    orientation_value: str | None,
+) -> tuple[int, int]:
+    preset = get_export_resolution_preset(resolution_value)
+    return preset.dimensions(orientation_value or DEFAULT_EXPORT_ORIENTATION)
 
 
 def export_video(
@@ -62,7 +104,8 @@ def export_video(
     export_format: str = DEFAULT_EXPORT_FORMAT,
     png_sequence_prefix: str = "frame",
 ) -> Path:
-    if export_format == EXPORT_FORMAT_PNG_SEQUENCE:
+    normalized_format = normalize_export_format(export_format)
+    if normalized_format == EXPORT_FORMAT_PNG_SEQUENCE:
         return _export_png_sequence(
             project=project,
             renderer=renderer,
@@ -72,6 +115,17 @@ def export_video(
             fps=fps,
             progress_callback=progress_callback,
             png_sequence_prefix=png_sequence_prefix,
+        )
+
+    if normalized_format == EXPORT_FORMAT_MOV:
+        return _export_mov(
+            project=project,
+            renderer=renderer,
+            output_path=output_path,
+            width=width,
+            height=height,
+            fps=fps,
+            progress_callback=progress_callback,
         )
 
     return _export_h264(
@@ -94,37 +148,103 @@ def _export_h264(
     fps: int,
     progress_callback: ProgressCallback | None,
 ) -> Path:
+    return _export_video_file(
+        project=project,
+        renderer=renderer,
+        output_path=output_path,
+        width=width,
+        height=height,
+        fps=fps,
+        progress_callback=progress_callback,
+        file_suffix=".mp4",
+        temp_file_name="export.mp4",
+        codec="libx264",
+        pixelformat="yuv420p",
+        color_mode="RGB",
+        writer_kwargs={"quality": 8},
+        progress_label="H.264",
+    )
+
+
+def _export_mov(
+    project: MidiProject,
+    renderer: ProjectRenderer,
+    output_path: str | Path,
+    width: int,
+    height: int,
+    fps: int,
+    progress_callback: ProgressCallback | None,
+) -> Path:
+    use_alpha = bool(getattr(renderer.settings, "transparent_background", False))
+    pixelformat = "yuva444p10le" if use_alpha else "yuv422p10le"
+    profile = "4" if use_alpha else "3"
+    color_mode = "RGBA" if use_alpha else "RGB"
+    return _export_video_file(
+        project=project,
+        renderer=renderer,
+        output_path=output_path,
+        width=width,
+        height=height,
+        fps=fps,
+        progress_callback=progress_callback,
+        file_suffix=".mov",
+        temp_file_name="export.mov",
+        codec="prores_ks",
+        pixelformat=pixelformat,
+        color_mode=color_mode,
+        writer_kwargs={"output_params": ["-profile:v", profile]},
+        progress_label="MOV",
+    )
+
+
+def _export_video_file(
+    project: MidiProject,
+    renderer: ProjectRenderer,
+    output_path: str | Path,
+    width: int,
+    height: int,
+    fps: int,
+    progress_callback: ProgressCallback | None,
+    *,
+    file_suffix: str,
+    temp_file_name: str,
+    codec: str,
+    pixelformat: str,
+    color_mode: str,
+    writer_kwargs: dict[str, object] | None,
+    progress_label: str,
+) -> Path:
     destination = Path(output_path)
-    if destination.suffix.lower() != ".mp4":
-        destination = destination.with_suffix(".mp4")
+    if destination.suffix.lower() != file_suffix:
+        destination = destination.with_suffix(file_suffix)
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     total_frames = _total_frames(project.duration_sec, fps)
     if progress_callback:
-        progress_callback(0.0, "H.264動画を書き出しています...")
+        progress_callback(0.0, f"{progress_label}を書き出しています...")
 
-    # Windows + imageio-ffmpeg can fail when ffmpeg receives a non-ASCII output filename.
-    # Render to a temporary ASCII-only path first, then move the finished MP4 to the user path.
+    writer_options = {
+        "fps": fps,
+        "codec": codec,
+        "pixelformat": pixelformat,
+        "macro_block_size": None,
+        "ffmpeg_log_level": "error",
+    }
+    if writer_kwargs:
+        writer_options.update(writer_kwargs)
+
     with tempfile.TemporaryDirectory(prefix="midi_video_export_") as temp_dir:
-        temp_output = Path(temp_dir) / "export.mp4"
-        with imageio.get_writer(
-            temp_output,
-            fps=fps,
-            codec="libx264",
-            quality=8,
-            pixelformat="yuv420p",
-            macro_block_size=None,
-            ffmpeg_log_level="error",
-        ) as writer:
+        temp_output = Path(temp_dir) / temp_file_name
+        with imageio.get_writer(temp_output, **writer_options) as writer:
             for frame_index in range(total_frames):
                 current_time = _frame_time(project.duration_sec, fps, frame_index)
                 frame = renderer.render_frame(current_time, width, height)
-                writer.append_data(np.asarray(frame.convert("RGB")))
+                writer.append_data(np.asarray(frame.convert(color_mode)))
 
                 if progress_callback:
                     progress_callback(
                         (frame_index + 1) / total_frames,
-                        f"H.264動画を書き出しています... {frame_index + 1}/{total_frames}",
+                        f"{progress_label}を書き出しています... {frame_index + 1}/{total_frames}",
                     )
 
         if destination.exists():

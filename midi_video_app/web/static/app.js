@@ -2,6 +2,7 @@ const boot = window.APP_BOOTSTRAP || {};
 
 const DEFAULT_EXPORT_FPS = Number(boot.defaultFps) || 120;
 const DEFAULT_EXPORT_FORMAT = boot.defaultExportFormat || "h264";
+const DEFAULT_EXPORT_ORIENTATION = boot.defaultExportOrientation || "landscape";
 const MAX_EXPORT_FPS = 240;
 const PREVIEW_INPUT_DEBOUNCE_MS = 16;
 const PREVIEW_FRAME_INTERVAL_MS = 16;
@@ -44,7 +45,10 @@ const elements = {
   deletePresetButton: document.getElementById("deletePresetButton"),
   themeSelect: document.getElementById("themeSelect"),
   exportFormatSelect: document.getElementById("exportFormatSelect"),
+  exportOrientationSelect: document.getElementById("exportOrientationSelect"),
   exportResolutionSelect: document.getElementById("exportResolutionSelect"),
+  exportResolutionSummary: document.getElementById("exportResolutionSummary"),
+  exportHintText: document.getElementById("exportHintText"),
   viewModeSelect: document.getElementById("viewModeSelect"),
   cornerStyleSelect: document.getElementById("cornerStyleSelect"),
   glowStyleSelect: document.getElementById("glowStyleSelect"),
@@ -172,7 +176,7 @@ const booleanSettingFields = new Set([
 
 const exportResolutionPresets = Array.isArray(boot.exportResolutions) ? boot.exportResolutions : [];
 const exportResolutionMap = new Map(exportResolutionPresets.map((preset) => [preset.value, preset]));
-const defaultExportResolution = boot.defaultExportResolution || exportResolutionPresets[0]?.value || "4k_landscape";
+const defaultExportResolution = boot.defaultExportResolution || exportResolutionPresets[0]?.value || "4k";
 
 function escapeHtml(value) {
   return String(value)
@@ -191,25 +195,62 @@ function getSelectedExportFormat() {
   return elements.exportFormatSelect.value || DEFAULT_EXPORT_FORMAT;
 }
 
+function getSelectedExportOrientation() {
+  return elements.exportOrientationSelect.value || DEFAULT_EXPORT_ORIENTATION;
+}
+
 function getSelectedExportPreset() {
   return exportResolutionMap.get(elements.exportResolutionSelect.value)
     || exportResolutionMap.get(defaultExportResolution)
-    || { value: "4k_landscape", label: "4K 横 3840×2160", width: 3840, height: 2160 };
+    || {
+      value: "4k",
+      label: "4K",
+      landscapeWidth: 3840,
+      landscapeHeight: 2160,
+      portraitWidth: 2160,
+      portraitHeight: 3840,
+    };
+}
+
+function getSelectedExportDimensions() {
+  const preset = getSelectedExportPreset();
+  if (getSelectedExportOrientation() === "portrait") {
+    return {
+      width: preset.portraitWidth,
+      height: preset.portraitHeight,
+    };
+  }
+  return {
+    width: preset.landscapeWidth,
+    height: preset.landscapeHeight,
+  };
 }
 
 function updatePreviewAspect() {
-  const preset = getSelectedExportPreset();
-  elements.previewFrame.style.aspectRatio = `${preset.width} / ${preset.height}`;
+  const { width, height } = getSelectedExportDimensions();
+  elements.previewFrame.style.aspectRatio = `${width} / ${height}`;
 }
 
 function syncExportUiState({ queue = false } = {}) {
   const exportFormat = getSelectedExportFormat();
-  const allowTransparency = exportFormat === "png_sequence";
+  const exportOrientation = getSelectedExportOrientation();
+  const { width, height } = getSelectedExportDimensions();
+  const allowTransparency = exportFormat === "mov" || exportFormat === "png_sequence";
   if (!allowTransparency) {
     elements.transparentBackgroundCheckbox.checked = false;
   }
   elements.transparentBackgroundCheckbox.disabled = !allowTransparency;
-  elements.exportButton.textContent = allowTransparency ? "連番PNGを書き出し" : "H.264を書き出し";
+  elements.exportResolutionSummary.textContent = `${width} x ${height} / ${exportOrientation === "portrait" ? "縦動画" : "横動画"}`;
+  if (exportFormat === "mov") {
+    elements.exportButton.textContent = "MOVを書き出し";
+    elements.exportHintText.textContent = "MOV は背景透過ありでも書き出せます。編集ソフト向けに使いやすい形式です。";
+  } else if (exportFormat === "png_sequence") {
+    elements.exportButton.textContent = "連番PNGを書き出し";
+    elements.exportHintText.textContent = "連番PNGは1フレームずつ保存します。背景透過にも対応します。";
+  } else {
+    elements.exportButton.textContent = "H.264を書き出し";
+    elements.exportHintText.textContent = "H.264 は MP4 で書き出します。背景透過は使えません。";
+  }
   updatePreviewAspect();
   if (queue) {
     queuePreview(true);
@@ -551,8 +592,8 @@ async function uploadMidi(file) {
 }
 
 function getPreviewSize() {
-  const preset = getSelectedExportPreset();
-  const aspectRatio = preset.width / Math.max(preset.height, 1);
+  const { width, height } = getSelectedExportDimensions();
+  const aspectRatio = width / Math.max(height, 1);
   const frameWidth = elements.previewFrame.clientWidth || elements.previewImage.clientWidth || 960;
   const previewWidth = Math.max(240, Math.min(1280, Math.round(frameWidth)));
   return {
@@ -728,9 +769,9 @@ async function exportVideo() {
 
   const fps = normalizeFpsInput();
   const exportFormat = getSelectedExportFormat();
-  const preset = getSelectedExportPreset();
-  const exportLabel = exportFormat === "png_sequence" ? "連番PNG" : "H.264";
-  setStatus(`${exportLabel}を書き出しています... ${fps}FPS / ${preset.width}x${preset.height}`);
+  const { width, height } = getSelectedExportDimensions();
+  const exportLabel = exportFormat === "png_sequence" ? "連番PNG" : exportFormat === "mov" ? "MOV" : "H.264";
+  setStatus(`${exportLabel}を書き出しています... ${fps}FPS / ${width}x${height}`);
   elements.exportButton.disabled = true;
 
   try {
@@ -740,8 +781,8 @@ async function exportVideo() {
       body: JSON.stringify({
         format: exportFormat,
         fps,
-        width: preset.width,
-        height: preset.height,
+        width,
+        height,
         settings: collectSettings(),
       }),
     });
@@ -759,7 +800,7 @@ async function exportVideo() {
     const blob = await response.blob();
     const disposition = response.headers.get("Content-Disposition") || "";
     const filenameMatch = disposition.match(/filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)\"?/i);
-    const defaultExtension = exportFormat === "png_sequence" ? ".zip" : ".mp4";
+    const defaultExtension = exportFormat === "png_sequence" ? ".zip" : exportFormat === "mov" ? ".mov" : ".mp4";
     const fileName = decodeURIComponent(
       filenameMatch?.[1] || filenameMatch?.[2] || `${state.fileName || "export"}${defaultExtension}`,
     );
@@ -806,6 +847,7 @@ function installPointerLighting() {
 function initialize() {
   populateSelect(elements.themeSelect, boot.choices.themes || [], boot.defaultTheme);
   populateSelect(elements.exportFormatSelect, boot.exportFormats || [], DEFAULT_EXPORT_FORMAT);
+  populateSelect(elements.exportOrientationSelect, boot.exportOrientations || [], DEFAULT_EXPORT_ORIENTATION);
   populateSelect(elements.exportResolutionSelect, boot.exportResolutions || [], defaultExportResolution);
   populateSelect(elements.viewModeSelect, boot.choices.viewModes || [], boot.defaultSettings.view_mode);
   populateSelect(elements.cornerStyleSelect, boot.choices.corners || [], boot.defaultSettings.corner_style);
@@ -839,9 +881,11 @@ function initialize() {
   elements.exportFormatSelect.addEventListener("change", () => {
     syncExportUiState({ queue: true });
   });
+  elements.exportOrientationSelect.addEventListener("change", () => {
+    syncExportUiState({ queue: true });
+  });
   elements.exportResolutionSelect.addEventListener("change", () => {
-    updatePreviewAspect();
-    queuePreview(true);
+    syncExportUiState({ queue: true });
   });
 
   elements.savePresetButton.addEventListener("click", saveCurrentPreset);

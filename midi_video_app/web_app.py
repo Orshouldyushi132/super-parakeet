@@ -14,9 +14,12 @@ from werkzeug.utils import secure_filename
 
 from .exporter import (
     DEFAULT_EXPORT_FORMAT,
+    DEFAULT_EXPORT_ORIENTATION,
     DEFAULT_EXPORT_RESOLUTION,
     EXPORT_FORMAT_CHOICES,
     EXPORT_FORMAT_H264,
+    EXPORT_FORMAT_MOV,
+    EXPORT_ORIENTATION_CHOICES,
     EXPORT_FORMAT_PNG_SEQUENCE,
     EXPORT_RESOLUTION_PRESETS,
     export_video,
@@ -77,18 +80,22 @@ def index():
         "customTheme": CUSTOM_THEME_NAME,
         "defaultFps": 120,
         "defaultExportFormat": DEFAULT_EXPORT_FORMAT,
+        "defaultExportOrientation": DEFAULT_EXPORT_ORIENTATION,
         "defaultExportResolution": DEFAULT_EXPORT_RESOLUTION,
         "defaultSettings": render_settings_to_dict(get_render_settings_for_theme(DEFAULT_THEME_NAME)),
         "themePresets": presets_payload(),
         "themeOrder": preset_order(),
         "userThemeNames": user_preset_names(),
         "exportFormats": _choices_to_payload(EXPORT_FORMAT_CHOICES),
+        "exportOrientations": _choices_to_payload(EXPORT_ORIENTATION_CHOICES),
         "exportResolutions": [
             {
                 "value": preset.value,
                 "label": preset.label,
-                "width": preset.width,
-                "height": preset.height,
+                "landscapeWidth": preset.width,
+                "landscapeHeight": preset.height,
+                "portraitWidth": preset.height,
+                "portraitHeight": preset.width,
             }
             for preset in EXPORT_RESOLUTION_PRESETS
         ],
@@ -221,7 +228,7 @@ def export_project(project_id: str):
     width = _coerce_int(payload.get("width"), 1920, 320, 3840)
     height = _coerce_int(payload.get("height"), 1080, 180, 3840)
     export_format = str(payload.get("format", DEFAULT_EXPORT_FORMAT)).strip().lower()
-    if export_format not in {EXPORT_FORMAT_H264, EXPORT_FORMAT_PNG_SEQUENCE}:
+    if export_format not in {EXPORT_FORMAT_H264, EXPORT_FORMAT_MOV, EXPORT_FORMAT_PNG_SEQUENCE}:
         export_format = DEFAULT_EXPORT_FORMAT
     if export_format == EXPORT_FORMAT_H264:
         settings.transparent_background = False
@@ -257,7 +264,8 @@ def export_project(project_id: str):
         response.call_on_close(cleanup_png)
         return response
 
-    output_path = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}.mp4"
+    file_suffix = ".mov" if export_format == EXPORT_FORMAT_MOV else ".mp4"
+    output_path = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}{file_suffix}"
     final_output_path = export_video(
         project=stored_project.project,
         renderer=renderer,
@@ -271,8 +279,8 @@ def export_project(project_id: str):
     response = send_file(
         final_output_path,
         as_attachment=True,
-        download_name=f"{source_stem}_{width}x{height}.mp4",
-        mimetype="video/mp4",
+        download_name=f"{source_stem}_{width}x{height}{file_suffix}",
+        mimetype="video/quicktime" if export_format == EXPORT_FORMAT_MOV else "video/mp4",
     )
     response.call_on_close(lambda: final_output_path.unlink(missing_ok=True))
     return response

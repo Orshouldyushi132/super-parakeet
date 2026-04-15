@@ -807,6 +807,12 @@ input[type="color"] {
   accent-color: rgb(var(--theme-active-rgb));
 }
 
+.toggle-card-compact {
+  min-height: 44px;
+  margin-top: 8px;
+  padding: 10px 12px;
+}
+
 .export-box {
   margin-top: 18px;
   padding-top: 18px;

@@ -10,13 +10,17 @@ from PIL import ImageTk
 
 from .exporter import (
     DEFAULT_EXPORT_FORMAT,
+    DEFAULT_EXPORT_ORIENTATION,
     DEFAULT_EXPORT_RESOLUTION,
     EXPORT_FORMAT_CHOICES,
     EXPORT_FORMAT_H264,
+    EXPORT_FORMAT_MOV,
+    EXPORT_ORIENTATION_CHOICES,
     EXPORT_FORMAT_PNG_SEQUENCE,
     EXPORT_RESOLUTION_PRESETS,
     ExportResolutionPreset,
     export_video,
+    get_export_dimensions,
     get_export_resolution_preset,
 )
 from .midi_loader import load_midi_project
@@ -90,6 +94,8 @@ class MidiVideoApp:
         self._attack_curve_label_to_value = {label: value for value, label in ATTACK_FADE_CURVE_CHOICES}
         self._export_format_value_to_label = {value: label for value, label in EXPORT_FORMAT_CHOICES}
         self._export_format_label_to_value = {label: value for value, label in EXPORT_FORMAT_CHOICES}
+        self._export_orientation_value_to_label = {value: label for value, label in EXPORT_ORIENTATION_CHOICES}
+        self._export_orientation_label_to_value = {label: value for value, label in EXPORT_ORIENTATION_CHOICES}
         self._export_resolution_value_to_label = {preset.value: preset.label for preset in EXPORT_RESOLUTION_PRESETS}
         self._export_resolution_label_to_value = {preset.label: preset.value for preset in EXPORT_RESOLUTION_PRESETS}
         self._theme_names = theme_name_choices()
@@ -100,9 +106,12 @@ class MidiVideoApp:
         self.measure_var = tk.StringVar(value="小節: -")
         self.fps_var = tk.StringVar(value=str(DEFAULT_FPS))
         self.export_format_var = tk.StringVar(value=self._export_format_value_to_label[DEFAULT_EXPORT_FORMAT])
-        self.export_resolution_var = tk.StringVar(
-            value=self._export_resolution_value_to_label[DEFAULT_EXPORT_RESOLUTION]
+        self.export_orientation_var = tk.StringVar(
+            value=self._export_orientation_value_to_label[DEFAULT_EXPORT_ORIENTATION]
         )
+        self.export_resolution_var = tk.StringVar(value=self._export_resolution_value_to_label[DEFAULT_EXPORT_RESOLUTION])
+        self.export_dimension_var = tk.StringVar()
+        self.export_hint_var = tk.StringVar()
         self.preset_name_var = tk.StringVar()
 
         self.theme_var = tk.StringVar(value=DEFAULT_THEME_NAME)
@@ -227,7 +236,7 @@ class MidiVideoApp:
         ttk.Label(header, text="MIDI Motion Studio", style="Hero.TLabel").pack(anchor="w")
         ttk.Label(
             header,
-            text="見た目を詰めながら、1小節ごとの固定表示をそのまま動画にできます。",
+            text="見た目を整えながら、演奏ビューをそのまま動画や連番PNGに書き出せます。",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(4, 0))
 
@@ -241,32 +250,11 @@ class MidiVideoApp:
         ttk.Button(controls, text="次の小節へ", command=lambda: self.jump_measure(1)).pack(side="left", padx=(8, 0))
         ttk.Button(controls, text="書き出し", style="Accent.TButton", command=self.export_media).pack(side="left", padx=(16, 0))
 
-        export_controls = ttk.Frame(controls, style="Surface.TFrame")
-        export_controls.pack(side="right")
-        ttk.Label(export_controls, text="形式", style="Muted.TLabel").pack(side="left", padx=(0, 6))
-        self.export_format_combo = ttk.Combobox(
-            export_controls,
-            state="readonly",
-            width=11,
-            values=[label for _, label in EXPORT_FORMAT_CHOICES],
-            textvariable=self.export_format_var,
-        )
-        self.export_format_combo.pack(side="left")
-        self.export_format_combo.bind("<<ComboboxSelected>>", self._on_export_options_changed)
-
-        ttk.Label(export_controls, text="解像度", style="Muted.TLabel").pack(side="left", padx=(12, 6))
-        self.export_resolution_combo = ttk.Combobox(
-            export_controls,
-            state="readonly",
-            width=18,
-            values=[preset.label for preset in EXPORT_RESOLUTION_PRESETS],
-            textvariable=self.export_resolution_var,
-        )
-        self.export_resolution_combo.pack(side="left")
-        self.export_resolution_combo.bind("<<ComboboxSelected>>", self._on_export_options_changed)
-
-        ttk.Label(export_controls, text="FPS", style="Muted.TLabel").pack(side="left", padx=(12, 6))
-        ttk.Entry(export_controls, width=6, textvariable=self.fps_var).pack(side="left")
+        ttk.Label(
+            controls,
+            text="書き出し形式・縦横・解像度・FPS は右側の「書き出し」タブでまとめて変更できます。",
+            style="Muted.TLabel",
+        ).pack(side="right")
 
         meta = ttk.Frame(outer)
         meta.pack(fill="x", pady=(12, 8))
@@ -299,7 +287,7 @@ class MidiVideoApp:
 
         ttk.Label(info, textvariable=self.time_var).pack(side="left")
         ttk.Label(info, textvariable=self.measure_var).pack(side="left", padx=(20, 0))
-        ttk.Label(info, text="初期値は 120FPS です。", style="Muted.TLabel").pack(side="right")
+        ttk.Label(info, text="初期設定は 4K / 横動画 / 120FPS です。", style="Muted.TLabel").pack(side="right")
 
         self.progress = ttk.Progressbar(outer, mode="determinate")
         self.progress.pack(fill="x", pady=(12, 0))
@@ -307,7 +295,7 @@ class MidiVideoApp:
     def _build_settings_panel(self, panel: ttk.LabelFrame) -> None:
         ttk.Label(
             panel,
-            text="テーマを土台にしつつ、ノーツ寸法・残像時間・切り替えフェードまで細かく詰められます。",
+            text="テーマを土台にしつつ、ノーツ寸法・残像時間・切り替えフェードまで細かく詰められます。書き出し設定は最後のタブから変更できます。",
             wraplength=360,
             justify="left",
         ).grid(row=0, column=0, columnspan=4, sticky="w")
@@ -321,16 +309,19 @@ class MidiVideoApp:
         color_tab = ttk.Frame(notebook, padding=12)
         effect_tab = ttk.Frame(notebook, padding=12)
         detail_tab = ttk.Frame(notebook, padding=12)
+        export_tab = ttk.Frame(notebook, padding=12)
 
         notebook.add(basic_tab, text="基本")
         notebook.add(color_tab, text="色")
         notebook.add(effect_tab, text="演出")
         notebook.add(detail_tab, text="詳細")
+        notebook.add(export_tab, text="書き出し")
 
         self._build_basic_settings_tab(basic_tab)
         self._build_color_settings_tab(color_tab)
         self._build_effect_settings_tab(effect_tab)
         self._build_detail_settings_tab(detail_tab)
+        self._build_export_settings_tab(export_tab)
 
     def _build_basic_settings_tab(self, panel: ttk.Frame) -> None:
         row = 0
@@ -425,19 +416,12 @@ class MidiVideoApp:
         ttk.Checkbutton(overlay_frame, text="小節ガイド", variable=self.show_measure_overlay_var, command=self._on_toggle_changed).grid(row=1, column=1, sticky="w", pady=(6, 0))
         ttk.Checkbutton(overlay_frame, text="統計表示", variable=self.show_stats_overlay_var, command=self._on_toggle_changed).grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(overlay_frame, text="コード表示", variable=self.show_chord_overlay_var, command=self._on_toggle_changed).grid(row=2, column=1, sticky="w", pady=(6, 0))
-        self.transparent_background_check = ttk.Checkbutton(
-            overlay_frame,
-            text="背景透過",
-            variable=self.transparent_background_var,
-            command=self._on_toggle_changed,
-        )
-        self.transparent_background_check.grid(row=3, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(
             overlay_frame,
             text="表示中の音域だけに自動フィット",
             variable=self.fit_to_visible_note_range_var,
             command=self._on_toggle_changed,
-        ).grid(row=3, column=1, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         row += 1
         ttk.Separator(panel).grid(row=row, column=0, columnspan=4, sticky="ew", pady=12)
@@ -658,6 +642,72 @@ class MidiVideoApp:
             pady=(14, 0),
         )
 
+    def _build_export_settings_tab(self, panel: ttk.Frame) -> None:
+        panel.columnconfigure(1, weight=1)
+        panel.columnconfigure(3, weight=1)
+
+        ttk.Label(
+            panel,
+            text="書き出しに使うファイル形式、縦横、解像度、FPS をここでまとめて切り替えられます。",
+            wraplength=320,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=4, sticky="w")
+
+        ttk.Label(panel, text="出力ファイル").grid(row=1, column=0, sticky="w", pady=(12, 0))
+        self.export_format_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in EXPORT_FORMAT_CHOICES],
+            textvariable=self.export_format_var,
+            width=18,
+        )
+        self.export_format_combo.grid(row=1, column=1, sticky="ew", pady=(12, 0))
+        self.export_format_combo.bind("<<ComboboxSelected>>", self._on_export_options_changed)
+
+        ttk.Label(panel, text="動画の向き").grid(row=1, column=2, sticky="w", padx=(12, 0), pady=(12, 0))
+        self.export_orientation_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in EXPORT_ORIENTATION_CHOICES],
+            textvariable=self.export_orientation_var,
+            width=12,
+        )
+        self.export_orientation_combo.grid(row=1, column=3, sticky="ew", pady=(12, 0))
+        self.export_orientation_combo.bind("<<ComboboxSelected>>", self._on_export_options_changed)
+
+        ttk.Label(panel, text="解像度").grid(row=2, column=0, sticky="w", pady=(12, 0))
+        self.export_resolution_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[preset.label for preset in EXPORT_RESOLUTION_PRESETS],
+            textvariable=self.export_resolution_var,
+            width=18,
+        )
+        self.export_resolution_combo.grid(row=2, column=1, sticky="ew", pady=(12, 0))
+        self.export_resolution_combo.bind("<<ComboboxSelected>>", self._on_export_options_changed)
+
+        ttk.Label(panel, text="FPS").grid(row=2, column=2, sticky="w", padx=(12, 0), pady=(12, 0))
+        ttk.Entry(panel, width=8, textvariable=self.fps_var).grid(row=2, column=3, sticky="ew", pady=(12, 0))
+
+        ttk.Label(panel, text="出力サイズ").grid(row=3, column=0, sticky="w", pady=(12, 0))
+        ttk.Label(panel, textvariable=self.export_dimension_var).grid(row=3, column=1, sticky="w", pady=(12, 0))
+
+        self.transparent_background_check = ttk.Checkbutton(
+            panel,
+            text="背景透過を使う",
+            variable=self.transparent_background_var,
+            command=self._on_toggle_changed,
+        )
+        self.transparent_background_check.grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+
+        ttk.Label(panel, textvariable=self.export_hint_var, style="Muted.TLabel", wraplength=320, justify="left").grid(
+            row=5,
+            column=0,
+            columnspan=4,
+            sticky="w",
+            pady=(10, 0),
+        )
+
     def _add_color_control(self, panel: ttk.LabelFrame, row: int, field_name: str) -> None:
         label = self._color_labels[field_name]
         value_var = tk.StringVar()
@@ -828,71 +878,15 @@ class MidiVideoApp:
 
     def export_mp4(self) -> None:
         self.export_media()
-        return
-
-        if not self.project or not self.renderer:
-            messagebox.showinfo("MIDIを開いてください", "動画を書き出す前にMIDIファイルを読み込んでください。")
-            return
-
-        if self._export_thread and self._export_thread.is_alive():
-            messagebox.showinfo("書き出し中です", "すでに動画の書き出しを実行中です。")
-            return
-
-        try:
-            fps = max(1, int(self.fps_var.get()))
-        except ValueError:
-            messagebox.showerror("FPSが不正です", "FPSには整数を入力してください。")
-            return
-
-        default_name = f"{self.project.source_path.stem}_小節切り替え.mp4"
-        export_extension = ".mp4"
-        export_label = "透過演奏ビュー" if self.render_settings.transparent_background else "演奏ビュー"
-        default_name = f"{self.project.source_path.stem}_{export_label}{export_extension}"
-        output_path = filedialog.asksaveasfilename(
-            title="MP4の保存先を選択",
-            defaultextension=".mp4",
-            initialfile=default_name,
-            filetypes=[("MP4動画", "*.mp4")],
-        )
-        if not output_path:
-            return
-        if Path(output_path).suffix.lower() != ".mp4":
-            output_path = str(Path(output_path).with_suffix(".mp4"))
-
-        export_settings = clone_render_settings(self.render_settings)
-        export_renderer = ProjectRenderer(self.project, export_settings)
-
-        self.playing = False
-        self.progress.configure(value=0.0)
-        self.status_var.set("現在の見た目設定で動画を書き出します...")
-
-        def progress_callback(progress_value: float, message: str) -> None:
-            self.root.after(0, lambda: self._update_export_progress(progress_value, message))
-
-        def run_export() -> None:
-            try:
-                saved_path = export_video(
-                    project=self.project,
-                    renderer=export_renderer,
-                    output_path=output_path,
-                    width=EXPORT_WIDTH,
-                    height=EXPORT_HEIGHT,
-                    fps=fps,
-                    progress_callback=progress_callback,
-                )
-            except Exception as error:
-                self.root.after(0, lambda: messagebox.showerror("書き出しに失敗しました", str(error)))
-                self.root.after(0, lambda: self.status_var.set("書き出しに失敗しました。"))
-                return
-
-            self.root.after(0, lambda: messagebox.showinfo("書き出し完了", f"動画を保存しました:\n{output_path}"))
-            self.root.after(0, lambda: self.status_var.set("書き出しが完了しました。"))
-
-        self._export_thread = threading.Thread(target=run_export, daemon=True)
-        self._export_thread.start()
 
     def _selected_export_format(self) -> str:
         return self._export_format_label_to_value.get(self.export_format_var.get(), DEFAULT_EXPORT_FORMAT)
+
+    def _selected_export_orientation(self) -> str:
+        return self._export_orientation_label_to_value.get(
+            self.export_orientation_var.get(),
+            DEFAULT_EXPORT_ORIENTATION,
+        )
 
     def _selected_export_resolution_preset(self) -> ExportResolutionPreset:
         value = self._export_resolution_label_to_value.get(
@@ -901,9 +895,13 @@ class MidiVideoApp:
         )
         return get_export_resolution_preset(value)
 
-    def _get_preview_dimensions(self) -> tuple[int, int]:
+    def _selected_export_dimensions(self) -> tuple[int, int]:
         preset = self._selected_export_resolution_preset()
-        ratio = preset.width / max(preset.height, 1)
+        return get_export_dimensions(preset.value, self._selected_export_orientation())
+
+    def _get_preview_dimensions(self) -> tuple[int, int]:
+        width, height = self._selected_export_dimensions()
+        ratio = width / max(height, 1)
         max_ratio = PREVIEW_MAX_WIDTH / PREVIEW_MAX_HEIGHT
         if ratio >= max_ratio:
             width = PREVIEW_MAX_WIDTH
@@ -926,8 +924,19 @@ class MidiVideoApp:
             suffix += 1
 
     def _update_export_option_state(self) -> None:
-        is_png_sequence = self._selected_export_format() == EXPORT_FORMAT_PNG_SEQUENCE
-        if is_png_sequence:
+        export_format = self._selected_export_format()
+        width, height = self._selected_export_dimensions()
+        allow_transparency = export_format in {EXPORT_FORMAT_MOV, EXPORT_FORMAT_PNG_SEQUENCE}
+
+        self.export_dimension_var.set(f"{width} x {height}")
+        if export_format == EXPORT_FORMAT_H264:
+            self.export_hint_var.set("H.264 は MP4 で書き出します。背景透過は使えません。")
+        elif export_format == EXPORT_FORMAT_MOV:
+            self.export_hint_var.set("MOV は背景透過ありでも書き出せます。編集ソフト向けの形式です。")
+        else:
+            self.export_hint_var.set("連番PNGはフォルダに1フレームずつ保存します。背景透過にも対応します。")
+
+        if allow_transparency:
             self.transparent_background_check.state(["!disabled"])
         else:
             self.transparent_background_check.state(["disabled"])
@@ -958,6 +967,8 @@ class MidiVideoApp:
 
         export_format = self._selected_export_format()
         resolution = self._selected_export_resolution_preset()
+        orientation = self._selected_export_orientation()
+        width, height = self._selected_export_dimensions()
         output_path: str | Path
 
         if export_format == EXPORT_FORMAT_PNG_SEQUENCE:
@@ -969,17 +980,19 @@ class MidiVideoApp:
                 f"{self.project.source_path.stem}_連番PNG",
             )
         else:
-            default_name = f"{self.project.source_path.stem}_{resolution.width}x{resolution.height}.mp4"
+            extension = ".mov" if export_format == EXPORT_FORMAT_MOV else ".mp4"
+            format_label = "MOV" if export_format == EXPORT_FORMAT_MOV else "H.264 MP4"
+            default_name = f"{self.project.source_path.stem}_{resolution.value}_{orientation}_{width}x{height}{extension}"
             output_path = filedialog.asksaveasfilename(
-                title="H.264動画の保存先を選択",
-                defaultextension=".mp4",
+                title=f"{format_label}の保存先を選択",
+                defaultextension=extension,
                 initialfile=default_name,
-                filetypes=[("H.264 MP4", "*.mp4")],
+                filetypes=[(format_label, f"*{extension}")],
             )
             if not output_path:
                 return
-            if Path(output_path).suffix.lower() != ".mp4":
-                output_path = str(Path(output_path).with_suffix(".mp4"))
+            if Path(output_path).suffix.lower() != extension:
+                output_path = str(Path(output_path).with_suffix(extension))
 
         export_settings = clone_render_settings(self.render_settings)
         if export_format == EXPORT_FORMAT_H264:
@@ -999,8 +1012,8 @@ class MidiVideoApp:
                     project=self.project,
                     renderer=export_renderer,
                     output_path=output_path,
-                    width=resolution.width,
-                    height=resolution.height,
+                    width=width,
+                    height=height,
                     fps=fps,
                     progress_callback=progress_callback,
                     export_format=export_format,
@@ -1014,7 +1027,7 @@ class MidiVideoApp:
             completion_message = (
                 f"連番PNGを書き出しました:\n{saved_path}"
                 if export_format == EXPORT_FORMAT_PNG_SEQUENCE
-                else f"H.264動画を書き出しました:\n{saved_path}"
+                else f"{'MOV' if export_format == EXPORT_FORMAT_MOV else 'H.264 MP4'}を書き出しました:\n{saved_path}"
             )
             self.root.after(0, lambda: messagebox.showinfo("書き出し完了", completion_message))
             self.root.after(0, lambda: self.status_var.set("書き出しが完了しました。"))
