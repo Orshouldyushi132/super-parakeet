@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 import shutil
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +11,9 @@ from typing import Callable
 
 import imageio.v2 as imageio
 import numpy as np
+from imageio_ffmpeg import get_ffmpeg_exe
 
+from .audio_engine import AudioMixSettings, DEFAULT_AUDIO_SAMPLE_RATE, create_mixed_audio_wav
 from .models import MidiProject
 from .renderer import ProjectRenderer
 
@@ -103,6 +106,7 @@ def export_video(
     progress_callback: ProgressCallback | None = None,
     export_format: str = DEFAULT_EXPORT_FORMAT,
     png_sequence_prefix: str = "frame",
+    audio_mix_settings: AudioMixSettings | None = None,
 ) -> Path:
     normalized_format = normalize_export_format(export_format)
     if normalized_format == EXPORT_FORMAT_PNG_SEQUENCE:
@@ -115,6 +119,7 @@ def export_video(
             fps=fps,
             progress_callback=progress_callback,
             png_sequence_prefix=png_sequence_prefix,
+            audio_mix_settings=audio_mix_settings,
         )
 
     if normalized_format == EXPORT_FORMAT_MOV:
@@ -126,6 +131,7 @@ def export_video(
             height=height,
             fps=fps,
             progress_callback=progress_callback,
+            audio_mix_settings=audio_mix_settings,
         )
 
     return _export_h264(
@@ -136,6 +142,7 @@ def export_video(
         height=height,
         fps=fps,
         progress_callback=progress_callback,
+        audio_mix_settings=audio_mix_settings,
     )
 
 
@@ -147,6 +154,7 @@ def _export_h264(
     height: int,
     fps: int,
     progress_callback: ProgressCallback | None,
+    audio_mix_settings: AudioMixSettings | None,
 ) -> Path:
     return _export_video_file(
         project=project,
@@ -163,6 +171,7 @@ def _export_h264(
         color_mode="RGB",
         writer_kwargs={"quality": 8},
         progress_label="H.264",
+        audio_mix_settings=audio_mix_settings,
     )
 
 
@@ -174,6 +183,7 @@ def _export_mov(
     height: int,
     fps: int,
     progress_callback: ProgressCallback | None,
+    audio_mix_settings: AudioMixSettings | None,
 ) -> Path:
     use_alpha = bool(getattr(renderer.settings, "transparent_background", False))
     pixelformat = "yuva444p10le" if use_alpha else "yuv422p10le"
@@ -194,6 +204,7 @@ def _export_mov(
         color_mode=color_mode,
         writer_kwargs={"output_params": ["-profile:v", profile]},
         progress_label="MOV",
+        audio_mix_settings=audio_mix_settings,
     )
 
 
@@ -213,6 +224,7 @@ def _export_video_file(
     color_mode: str,
     writer_kwargs: dict[str, object] | None,
     progress_label: str,
+    audio_mix_settings: AudioMixSettings | None,
 ) -> Path:
     destination = Path(output_path)
     if destination.suffix.lower() != file_suffix:
@@ -243,13 +255,34 @@ def _export_video_file(
 
                 if progress_callback:
                     progress_callback(
-                        (frame_index + 1) / total_frames,
+                        ((frame_index + 1) / total_frames) * 0.82,
                         f"{progress_label}を書き出しています... {frame_index + 1}/{total_frames}",
                     )
+        final_temp_output = temp_output
+        if audio_mix_settings and audio_mix_settings.has_audio():
+            if progress_callback:
+                progress_callback(0.86, "音声を合成しています...")
+            audio_path = create_mixed_audio_wav(
+                project,
+                audio_mix_settings,
+                Path(temp_dir) / "audio_mix.wav",
+                sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
+            )
+            if audio_path is not None:
+                if progress_callback:
+                    progress_callback(0.92, "動画と音声を結合しています...")
+                muxed_output = Path(temp_dir) / f"muxed{file_suffix}"
+                _mux_audio_track(
+                    video_path=temp_output,
+                    audio_path=audio_path,
+                    output_path=muxed_output,
+                    export_format=file_suffix,
+                )
+                final_temp_output = muxed_output
 
         if destination.exists():
             destination.unlink()
-        shutil.move(str(temp_output), str(destination))
+        shutil.move(str(final_temp_output), str(destination))
 
     if progress_callback:
         progress_callback(1.0, f"書き出しが完了しました: {destination.name}")
@@ -265,6 +298,7 @@ def _export_png_sequence(
     fps: int,
     progress_callback: ProgressCallback | None,
     png_sequence_prefix: str,
+    audio_mix_settings: AudioMixSettings | None,
 ) -> Path:
     destination_dir = Path(output_path)
     destination_dir.mkdir(parents=True, exist_ok=True)
@@ -290,8 +324,49 @@ def _export_png_sequence(
             )
 
     if progress_callback:
+        progress_callback(0.9, f"連番PNGを書き出しています... {total_frames}/{total_frames}")
+
+    if audio_mix_settings and audio_mix_settings.has_audio():
+        create_mixed_audio_wav(
+            project,
+            audio_mix_settings,
+            destination_dir / f"{prefix}_audio.wav",
+            sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
+        )
+
+    if progress_callback:
         progress_callback(1.0, f"書き出しが完了しました: {destination_dir.name}")
     return destination_dir
+
+
+def _mux_audio_track(video_path: Path, audio_path: Path, output_path: Path, export_format: str) -> None:
+    ffmpeg_exe = get_ffmpeg_exe()
+    audio_codec = ["-c:a", "pcm_s16le"] if export_format == ".mov" else ["-c:a", "aac", "-b:a", "192k"]
+    extra_params = ["-movflags", "+faststart"] if export_format == ".mp4" else []
+    command = [
+        ffmpeg_exe,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        *audio_codec,
+        *extra_params,
+        str(output_path),
+    ]
+    completed = subprocess.run(command, capture_output=True, check=False)
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"FFmpeg で音声結合に失敗しました: {stderr or completed.returncode}")
 
 
 def _total_frames(duration_sec: float, fps: int) -> int:

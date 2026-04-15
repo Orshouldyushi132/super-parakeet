@@ -952,11 +952,12 @@ class ProjectRenderer:
     def _lyrics_reserve_height(self, overlay_layout: str, overlay_scale: float) -> float:
         if not self.settings.show_chord_overlay:
             return 0.0
+        space_scale = max(0.0, float(getattr(self.settings, "lyrics_space_scale", 1.0)))
         if overlay_layout == "portrait":
-            return 132 * overlay_scale
+            return 132 * overlay_scale * space_scale
         if overlay_layout == "compact":
-            return 108 * overlay_scale
-        return 84 * overlay_scale
+            return 108 * overlay_scale * space_scale
+        return 84 * overlay_scale * space_scale
 
     def _overlay_color(self, alpha: int) -> tuple[int, int, int, int]:
         return _with_alpha(self.settings.text_color, alpha)

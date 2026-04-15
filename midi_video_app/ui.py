@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -8,6 +9,7 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from PIL import ImageTk
 
+from .audio_engine import AudioMixSettings, create_mixed_audio_wav
 from .exporter import (
     DEFAULT_EXPORT_FORMAT,
     DEFAULT_EXPORT_ORIENTATION,
@@ -49,6 +51,11 @@ from .preset_store import (
 )
 from .renderer import ProjectRenderer
 
+try:
+    import winsound
+except ImportError:  # pragma: no cover - Windows only
+    winsound = None
+
 
 PREVIEW_MAX_WIDTH = 960
 PREVIEW_MAX_HEIGHT = 540
@@ -73,6 +80,8 @@ class MidiVideoApp:
         self._preview_image: ImageTk.PhotoImage | None = None
         self._export_thread: threading.Thread | None = None
         self._updating_style_controls = False
+        self._preview_audio_path: Path | None = None
+        self.backing_audio_path: Path | None = None
 
         self._glow_value_to_label = {value: label for value, label in GLOW_STYLE_CHOICES}
         self._glow_label_to_value = {label: value for value, label in GLOW_STYLE_CHOICES}
@@ -133,6 +142,7 @@ class MidiVideoApp:
             value=self._attack_curve_value_to_label[self.render_settings.attack_fade_curve]
         )
         self.visible_measure_count_var = tk.DoubleVar(value=float(self.render_settings.visible_measure_count))
+        self.lyrics_space_scale_var = tk.DoubleVar(value=self.render_settings.lyrics_space_scale * 100.0)
         self.transparent_background_var = tk.BooleanVar(value=self.render_settings.transparent_background)
         self.fit_to_visible_note_range_var = tk.BooleanVar(value=self.render_settings.fit_to_visible_note_range)
         self.hide_future_notes_var = tk.BooleanVar(value=self.render_settings.hide_future_notes)
@@ -156,12 +166,17 @@ class MidiVideoApp:
         self.afterimage_padding_var = tk.DoubleVar(value=self.render_settings.afterimage_padding_scale * 100.0)
         self.release_fade_duration_var = tk.DoubleVar(value=self.render_settings.release_fade_duration_sec * 100.0)
         self.attack_fade_duration_var = tk.DoubleVar(value=self.render_settings.attack_fade_duration_sec * 100.0)
+        self.enable_midi_audio_var = tk.BooleanVar(value=True)
+        self.loop_backing_audio_var = tk.BooleanVar(value=False)
+        self.midi_audio_volume_var = tk.DoubleVar(value=70.0)
+        self.backing_audio_volume_var = tk.DoubleVar(value=85.0)
         self.glow_strength_text_var = tk.StringVar()
         self.animation_strength_text_var = tk.StringVar()
         self.animation_speed_text_var = tk.StringVar()
         self.afterimage_strength_text_var = tk.StringVar()
         self.note_length_scale_text_var = tk.StringVar()
         self.note_height_scale_text_var = tk.StringVar()
+        self.lyrics_space_scale_text_var = tk.StringVar()
         self.horizontal_padding_text_var = tk.StringVar()
         self.vertical_padding_text_var = tk.StringVar()
         self.idle_outline_width_text_var = tk.StringVar()
@@ -172,6 +187,9 @@ class MidiVideoApp:
         self.release_fade_duration_text_var = tk.StringVar()
         self.attack_fade_duration_text_var = tk.StringVar()
         self.visible_measure_count_text_var = tk.StringVar()
+        self.midi_audio_volume_text_var = tk.StringVar()
+        self.backing_audio_volume_text_var = tk.StringVar()
+        self.backing_audio_path_var = tk.StringVar(value="追加の音声ファイル: なし")
 
         self._color_labels = {
             "background_color": "背景色",
@@ -189,6 +207,7 @@ class MidiVideoApp:
         self._build_ui()
         self._sync_style_controls_from_settings(selected_theme=DEFAULT_THEME_NAME)
         self._schedule_playback_tick()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -402,6 +421,18 @@ class MidiVideoApp:
             self.visible_measure_count_text_var,
             1,
             8,
+            self._on_strength_changed,
+        )
+
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "歌詞スペースの高さ",
+            self.lyrics_space_scale_var,
+            self.lyrics_space_scale_text_var,
+            0,
+            300,
             self._on_strength_changed,
         )
 
@@ -700,12 +731,62 @@ class MidiVideoApp:
         )
         self.transparent_background_check.grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
-        ttk.Label(panel, textvariable=self.export_hint_var, style="Muted.TLabel", wraplength=320, justify="left").grid(
-            row=5,
+        ttk.Separator(panel).grid(row=5, column=0, columnspan=4, sticky="ew", pady=(14, 10))
+
+        ttk.Label(panel, text="音声").grid(row=6, column=0, sticky="w")
+        ttk.Checkbutton(
+            panel,
+            text="MIDIデータから音を鳴らす",
+            variable=self.enable_midi_audio_var,
+            command=self._on_audio_option_changed,
+        ).grid(row=6, column=1, columnspan=3, sticky="w")
+
+        ttk.Label(panel, textvariable=self.backing_audio_path_var, style="Muted.TLabel", wraplength=320, justify="left").grid(
+            row=7,
             column=0,
             columnspan=4,
             sticky="w",
             pady=(10, 0),
+        )
+
+        audio_file_row = ttk.Frame(panel)
+        audio_file_row.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        ttk.Button(audio_file_row, text="音声ファイルを選ぶ", command=self._choose_backing_audio).pack(side="left")
+        ttk.Button(audio_file_row, text="音声ファイルを外す", command=self._clear_backing_audio).pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(
+            audio_file_row,
+            text="短い音声はループする",
+            variable=self.loop_backing_audio_var,
+            command=self._on_audio_option_changed,
+        ).pack(side="left", padx=(12, 0))
+
+        self._add_slider_control(
+            panel,
+            9,
+            "MIDI音量",
+            self.midi_audio_volume_var,
+            self.midi_audio_volume_text_var,
+            0,
+            150,
+            self._on_audio_option_changed,
+        )
+        self._add_slider_control(
+            panel,
+            10,
+            "追加音声音量",
+            self.backing_audio_volume_var,
+            self.backing_audio_volume_text_var,
+            0,
+            150,
+            self._on_audio_option_changed,
+        )
+
+        ttk.Label(panel, textvariable=self.export_hint_var, style="Muted.TLabel", wraplength=320, justify="left").grid(
+            row=11,
+            column=0,
+            columnspan=4,
+            sticky="w",
+            pady=(12, 0),
         )
 
     def _add_color_control(self, panel: ttk.LabelFrame, row: int, field_name: str) -> None:
@@ -817,6 +898,7 @@ class MidiVideoApp:
         if not midi_path:
             return
 
+        self._stop_audio_preview()
         self.status_var.set("MIDIを読み込み中...")
         self.root.update_idletasks()
 
@@ -846,14 +928,16 @@ class MidiVideoApp:
         if self.playing:
             self.playing = False
             self.playback_origin_sec = self.current_time_sec
+            self._stop_audio_preview()
             self.status_var.set("再生を一時停止しました。")
             return
 
         if self.current_time_sec >= self.project.duration_sec:
             self.current_time_sec = 0.0
 
-        self.playing = True
         self.playback_origin_sec = self.current_time_sec
+        self._start_audio_preview()
+        self.playing = True
         self.playback_started_at = time.perf_counter()
         self.status_var.set("再生中...")
 
@@ -861,6 +945,7 @@ class MidiVideoApp:
         self.playing = False
         self.current_time_sec = 0.0
         self.playback_origin_sec = 0.0
+        self._stop_audio_preview()
         self.status_var.set("停止しました。")
         self._refresh_preview()
 
@@ -871,6 +956,7 @@ class MidiVideoApp:
         current_measure = self.renderer.get_measure_for_time(self.current_time_sec)
         target_index = max(0, min(current_measure.index + direction, self.project.measure_count - 1))
         self.playing = False
+        self._stop_audio_preview()
         self.current_time_sec = self.project.measures[target_index].start_sec
         self.playback_origin_sec = self.current_time_sec
         self.status_var.set(f"{target_index + 1}小節目へ移動しました。")
@@ -930,11 +1016,11 @@ class MidiVideoApp:
 
         self.export_dimension_var.set(f"{width} x {height}")
         if export_format == EXPORT_FORMAT_H264:
-            self.export_hint_var.set("H.264 は MP4 で書き出します。背景透過は使えません。")
+            self.export_hint_var.set("H.264 は MP4 で書き出します。背景透過は使えませんが、MIDI音と追加音声は一緒に入れられます。")
         elif export_format == EXPORT_FORMAT_MOV:
-            self.export_hint_var.set("MOV は背景透過ありでも書き出せます。編集ソフト向けの形式です。")
+            self.export_hint_var.set("MOV は背景透過ありでも書き出せます。MIDI音や追加音声も一緒に書き出せる、編集向けの形式です。")
         else:
-            self.export_hint_var.set("連番PNGはフォルダに1フレームずつ保存します。背景透過にも対応します。")
+            self.export_hint_var.set("連番PNGは1フレームずつ保存し、音声がある場合は同じフォルダに WAV も出力します。背景透過にも対応します。")
 
         if allow_transparency:
             self.transparent_background_check.state(["!disabled"])
@@ -969,6 +1055,7 @@ class MidiVideoApp:
         resolution = self._selected_export_resolution_preset()
         orientation = self._selected_export_orientation()
         width, height = self._selected_export_dimensions()
+        audio_mix_settings = self._current_audio_mix_settings()
         output_path: str | Path
 
         if export_format == EXPORT_FORMAT_PNG_SEQUENCE:
@@ -1000,6 +1087,7 @@ class MidiVideoApp:
         export_renderer = ProjectRenderer(self.project, export_settings)
 
         self.playing = False
+        self._stop_audio_preview()
         self.progress.configure(value=0.0)
         self.status_var.set("現在の見た目設定で書き出しています...")
 
@@ -1018,6 +1106,7 @@ class MidiVideoApp:
                     progress_callback=progress_callback,
                     export_format=export_format,
                     png_sequence_prefix=self.project.source_path.stem,
+                    audio_mix_settings=audio_mix_settings,
                 )
             except Exception as error:
                 self.root.after(0, lambda: messagebox.showerror("書き出しに失敗しました", str(error)))
@@ -1026,6 +1115,7 @@ class MidiVideoApp:
 
             completion_message = (
                 f"連番PNGを書き出しました:\n{saved_path}"
+                + ("\n音声は同じフォルダに WAV として保存されています。" if audio_mix_settings.has_audio() else "")
                 if export_format == EXPORT_FORMAT_PNG_SEQUENCE
                 else f"{'MOV' if export_format == EXPORT_FORMAT_MOV else 'H.264 MP4'}を書き出しました:\n{saved_path}"
             )
@@ -1034,6 +1124,95 @@ class MidiVideoApp:
 
         self._export_thread = threading.Thread(target=run_export, daemon=True)
         self._export_thread.start()
+
+    def _current_audio_mix_settings(self) -> AudioMixSettings:
+        return AudioMixSettings(
+            enable_midi_audio=bool(self.enable_midi_audio_var.get()),
+            midi_volume=max(0.0, self.midi_audio_volume_var.get() / 100.0),
+            backing_track_path=self.backing_audio_path,
+            backing_track_volume=max(0.0, self.backing_audio_volume_var.get() / 100.0),
+            loop_backing_track=bool(self.loop_backing_audio_var.get()),
+        )
+
+    def _choose_backing_audio(self) -> None:
+        audio_path = filedialog.askopenfilename(
+            title="音声ファイルを選択",
+            filetypes=[
+                ("音声ファイル", "*.wav *.mp3 *.m4a *.aac *.flac *.ogg *.opus"),
+                ("すべてのファイル", "*.*"),
+            ],
+        )
+        if not audio_path:
+            return
+        self.backing_audio_path = Path(audio_path)
+        self.backing_audio_path_var.set(f"追加の音声ファイル: {audio_path}")
+        self._on_audio_option_changed()
+
+    def _clear_backing_audio(self) -> None:
+        self.backing_audio_path = None
+        self.backing_audio_path_var.set("追加の音声ファイル: なし")
+        self._on_audio_option_changed()
+
+    def _on_audio_option_changed(self, _raw_value=None) -> None:
+        self._update_slider_labels()
+        if self.playing:
+            self._stop_audio_preview()
+            self.playback_origin_sec = self.current_time_sec
+            self._start_audio_preview()
+            self.playback_started_at = time.perf_counter()
+
+    def _start_audio_preview(self) -> None:
+        if not self.project:
+            return
+        self._stop_audio_preview()
+        if winsound is None:
+            return
+
+        audio_settings = self._current_audio_mix_settings()
+        if not audio_settings.has_audio():
+            return
+
+        try:
+            preview_path = self._render_preview_audio_file(audio_settings)
+        except Exception as error:
+            self.status_var.set(f"音声の準備に失敗しました: {error}")
+            return
+        if preview_path is None:
+            return
+        self._preview_audio_path = preview_path
+        winsound.PlaySound(str(preview_path), winsound.SND_ASYNC | winsound.SND_FILENAME | winsound.SND_NODEFAULT)
+
+    def _stop_audio_preview(self) -> None:
+        if winsound is not None:
+            winsound.PlaySound(None, 0)
+        if self._preview_audio_path is not None:
+            try:
+                self._preview_audio_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._preview_audio_path = None
+
+    def _render_preview_audio_file(self, audio_settings: AudioMixSettings) -> Path | None:
+        if not self.project or not audio_settings.has_audio():
+            return None
+        temp_handle = tempfile.NamedTemporaryFile(prefix="midi_preview_audio_", suffix=".wav", delete=False)
+        temp_handle.close()
+        preview_path = Path(temp_handle.name)
+        created_path = create_mixed_audio_wav(
+            self.project,
+            audio_settings,
+            preview_path,
+            start_sec=self.current_time_sec,
+        )
+        if created_path is None:
+            preview_path.unlink(missing_ok=True)
+            return None
+        return created_path
+
+    def _on_close(self) -> None:
+        self.playing = False
+        self._stop_audio_preview()
+        self.root.destroy()
 
     def on_timeline_changed(self, raw_value: str) -> None:
         if self._slider_updating or not self.project:
@@ -1047,6 +1226,7 @@ class MidiVideoApp:
         self.current_time_sec = max(0.0, min(value, self.project.duration_sec))
         self.playing = False
         self.playback_origin_sec = self.current_time_sec
+        self._stop_audio_preview()
         self._refresh_preview()
 
     def _choose_color(self, field_name: str) -> None:
@@ -1130,6 +1310,7 @@ class MidiVideoApp:
             return
 
         self.render_settings.visible_measure_count = max(1, min(8, int(round(self.visible_measure_count_var.get()))))
+        self.render_settings.lyrics_space_scale = round(self.lyrics_space_scale_var.get() / 100.0, 3)
         self.render_settings.glow_strength = round(self.glow_strength_var.get() / 100.0, 3)
         self.render_settings.animation_strength = round(self.animation_strength_var.get() / 100.0, 3)
         self.render_settings.animation_speed = round(self.animation_speed_var.get() / 100.0, 3)
@@ -1167,6 +1348,7 @@ class MidiVideoApp:
         self.attack_fade_style_var.set(self._attack_fade_value_to_label[self.render_settings.attack_fade_style])
         self.attack_fade_curve_var.set(self._attack_curve_value_to_label[self.render_settings.attack_fade_curve])
         self.visible_measure_count_var.set(float(self.render_settings.visible_measure_count))
+        self.lyrics_space_scale_var.set(self.render_settings.lyrics_space_scale * 100.0)
         self.transparent_background_var.set(self.render_settings.transparent_background)
         self.fit_to_visible_note_range_var.set(self.render_settings.fit_to_visible_note_range)
         self.hide_future_notes_var.set(self.render_settings.hide_future_notes)
@@ -1211,6 +1393,7 @@ class MidiVideoApp:
         self.note_length_scale_text_var.set(f"{self.note_length_scale_var.get():.0f}%")
         self.note_height_scale_text_var.set(f"{self.note_height_scale_var.get():.0f}%")
         self.visible_measure_count_text_var.set(f"{int(round(self.visible_measure_count_var.get()))}小節")
+        self.lyrics_space_scale_text_var.set(f"{self.lyrics_space_scale_var.get():.0f}%")
         self.horizontal_padding_text_var.set(f"{self.horizontal_padding_var.get():.0f}%")
         self.vertical_padding_text_var.set(f"{self.vertical_padding_var.get():.0f}%")
         self.idle_outline_width_text_var.set(f"{self.idle_outline_width_var.get() / 100.0:.2f}x")
@@ -1220,6 +1403,8 @@ class MidiVideoApp:
         self.afterimage_padding_text_var.set(f"{self.afterimage_padding_var.get() / 100.0:.2f}x")
         self.release_fade_duration_text_var.set(f"{self.release_fade_duration_var.get() / 100.0:.2f}秒")
         self.attack_fade_duration_text_var.set(f"{self.attack_fade_duration_var.get() / 100.0:.2f}秒")
+        self.midi_audio_volume_text_var.set(f"{self.midi_audio_volume_var.get():.0f}%")
+        self.backing_audio_volume_text_var.set(f"{self.backing_audio_volume_var.get():.0f}%")
 
     def _schedule_playback_tick(self) -> None:
         self._handle_playback_tick()
@@ -1237,6 +1422,7 @@ class MidiVideoApp:
             if self.current_time_sec >= self.project.duration_sec:
                 self.current_time_sec = self.project.duration_sec
                 self.playing = False
+                self._stop_audio_preview()
                 self.status_var.set("再生が終了しました。")
                 needs_refresh = True
 
