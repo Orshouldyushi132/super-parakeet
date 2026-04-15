@@ -294,12 +294,12 @@ class ProjectRenderer:
         start_measure_index, visible_measure_count = self._performance_window(clamped_time)
         visible_measures = self.project.measures[start_measure_index : start_measure_index + visible_measure_count]
         current_measure = self.get_measure_for_time(clamped_time)
+        overlay_layout = self._overlay_layout_mode(width, height)
         overlay_scale = self._overlay_scale(width, height)
 
         horizontal_padding = width * max(0.025, self.settings.horizontal_padding_ratio * 0.55)
         vertical_padding = height * max(0.04, self.settings.vertical_padding_ratio * 0.5)
-        top_overlay_height = 104 * overlay_scale if self.settings.show_time_overlay or self.settings.show_stats_overlay else 42 * overlay_scale
-        bottom_overlay_height = 112 * overlay_scale if self.settings.show_chord_overlay else 46 * overlay_scale
+        top_overlay_height, bottom_overlay_height = self._performance_overlay_heights(overlay_layout, overlay_scale)
         left_padding = horizontal_padding
         right_padding = horizontal_padding
         top_padding = vertical_padding + top_overlay_height
@@ -324,6 +324,7 @@ class ProjectRenderer:
                 measure_width,
                 plot_height,
                 current_measure,
+                overlay_layout,
             )
 
         active_items: list[_ActiveRenderItem] = []
@@ -450,6 +451,7 @@ class ProjectRenderer:
             height,
             top_overlay_height,
             bottom_overlay_height,
+            overlay_layout,
         )
 
         return image if self.settings.transparent_background else image.convert("RGB")
@@ -536,8 +538,13 @@ class ProjectRenderer:
         measure_width: float,
         plot_height: float,
         current_measure: Measure,
+        overlay_layout: str,
     ) -> None:
-        label_font = _load_font(max(12, int(plot_height * 0.025)), "light")
+        overlay_scale = self._overlay_scale(measure_width * max(1, len(visible_measures)), plot_height)
+        max_label_size = 26 if overlay_layout == "wide" else 22 if overlay_layout == "compact" else 18
+        label_size = max(12, min(int(plot_height * 0.025), int(max_label_size * overlay_scale), int(measure_width * 0.18)))
+        label_font = _load_font(label_size, "light")
+        label_y = top_padding - getattr(label_font, "size", label_size) - max(6, int(8 * overlay_scale))
         for slot_index, measure in enumerate(visible_measures):
             measure_x0 = left_padding + slot_index * measure_width
             measure_x1 = measure_x0 + measure_width
@@ -557,7 +564,7 @@ class ProjectRenderer:
                 )
             self._draw_overlay_text(
                 draw,
-                (measure_x0 + 6, top_padding - (getattr(label_font, "size", 16)) - 10),
+                (measure_x0 + 6, label_y),
                 f"{measure.index + 1:03d}",
                 label_font,
                 self._overlay_color(144),
@@ -645,25 +652,29 @@ class ProjectRenderer:
         height: int,
         top_overlay_height: float,
         bottom_overlay_height: float,
+        overlay_layout: str,
     ) -> None:
         beat_index, beat_fraction = self._beat_display_state(current_measure, time_sec)
         beat_millis = int(_clamp(beat_fraction, 0.0, 0.999) * 1000)
         top_left_x = left_padding
         overlay_scale = self._overlay_scale(width, height)
+        usable_width = max(1.0, width - left_padding * 2.0)
+        stacked_top = overlay_layout != "wide"
         top_y = vertical_padding + 10 * overlay_scale
-        block_gap = 54 * overlay_scale
-        divider_gap = 22 * overlay_scale
+        block_gap = (54 if overlay_layout == "wide" else 34 if overlay_layout == "compact" else 24) * overlay_scale
+        divider_gap = (22 if overlay_layout == "wide" else 16 if overlay_layout == "compact" else 12) * overlay_scale
         line_height = 16 * overlay_scale
         label_font = _load_font(int(15 * overlay_scale), "light")
-        value_font = _load_font(int(34 * overlay_scale), "regular")
+        value_font = _load_font(int((34 if overlay_layout == "wide" else 30 if overlay_layout == "compact" else 27) * overlay_scale), "regular")
         stat_label_font = _load_font(int(14 * overlay_scale), "light")
-        stat_value_font = _load_font(int(20 * overlay_scale), "regular")
-        chord_label_font = _load_font(int(16 * overlay_scale), "light")
-        chord_font = _load_font(int(56 * overlay_scale), "regular")
-        chord_notes_font = _load_font(int(21 * overlay_scale), "light")
+        stat_value_font = _load_font(int((20 if overlay_layout == "wide" else 18 if overlay_layout == "compact" else 17) * overlay_scale), "regular")
+        chord_label_font = _load_font(int((16 if overlay_layout == "wide" else 15 if overlay_layout == "compact" else 14) * overlay_scale), "light")
+        chord_font = _load_font(int((56 if overlay_layout == "wide" else 48 if overlay_layout == "compact" else 38) * overlay_scale), "regular")
+        chord_notes_font = _load_font(int((21 if overlay_layout == "wide" else 19 if overlay_layout == "compact" else 17) * overlay_scale), "light")
         footer_font = _load_font(int(14 * overlay_scale), "light")
         label_y = top_y
         value_y = top_y + 18 * overlay_scale
+        top_cursor_y = top_y
 
         if self.settings.show_time_overlay:
             blocks = (
@@ -704,6 +715,7 @@ class ProjectRenderer:
                     )
                 block_x += block_width + block_gap
             self._draw_beat_pips(draw, current_measure, beat_index, beat_block_x, value_y + 40 * overlay_scale, overlay_scale)
+            top_cursor_y = value_y + 58 * overlay_scale
 
         if self.settings.show_stats_overlay:
             played_notes = bisect_right(self._note_start_seconds, time_sec + 1e-9)
@@ -714,12 +726,16 @@ class ProjectRenderer:
                 ("再生済み", f"{played_notes}/{total_notes} ({played_notes / total_notes:.1%})"),
                 ("同時発音", f"{active_note_count} ノート"),
             )
-            line_y = top_y
+            line_y = top_y if not stacked_top else top_cursor_y + 12 * overlay_scale
             for label, value in stats_lines:
                 value_bbox = draw.draw.textbbox((0, 0), value, font=stat_value_font)
-                value_x = width - left_padding - (value_bbox[2] - value_bbox[0])
                 label_bbox = draw.draw.textbbox((0, 0), label, font=stat_label_font)
-                label_x = width - left_padding - (label_bbox[2] - label_bbox[0])
+                if stacked_top:
+                    label_x = top_left_x
+                    value_x = top_left_x
+                else:
+                    value_x = width - left_padding - (value_bbox[2] - value_bbox[0])
+                    label_x = width - left_padding - (label_bbox[2] - label_bbox[0])
                 self._draw_overlay_text(
                     draw,
                     (label_x, line_y),
@@ -737,12 +753,16 @@ class ProjectRenderer:
                     shadow_alpha=100,
                 )
                 line_y += 42 * overlay_scale
+            top_cursor_y = max(top_cursor_y, line_y)
 
         if self.settings.show_measure_overlay and visible_measures:
             footer_text = f"表示小節 {len(visible_measures)}"
+            footer_y = height - bottom_overlay_height + 28 * overlay_scale
+            if overlay_layout == "portrait" and self.settings.show_chord_overlay:
+                footer_y = height - bottom_overlay_height + 108 * overlay_scale
             self._draw_overlay_text(
                 draw,
-                (left_padding, height - bottom_overlay_height + 28 * overlay_scale),
+                (left_padding, footer_y),
                 footer_text,
                 footer_font,
                 self._overlay_color(154),
@@ -762,7 +782,10 @@ class ProjectRenderer:
                 chord_bbox[2] - chord_bbox[0],
                 notes_bbox[2] - notes_bbox[0],
             )
+            chord_block_width = min(chord_block_width, usable_width)
             chord_x = width - left_padding - chord_block_width
+            if overlay_layout == "portrait":
+                chord_x = top_left_x
             chord_y = height - bottom_overlay_height + 10 * overlay_scale
             draw.line(
                 (chord_x, chord_y - 10 * overlay_scale, chord_x + min(chord_block_width, 108 * overlay_scale), chord_y - 10 * overlay_scale),
@@ -902,6 +925,28 @@ class ProjectRenderer:
     @staticmethod
     def _overlay_scale(width: float, height: float) -> float:
         return max(0.85, min(width / 1920.0, height / 1080.0, 1.35))
+
+    @staticmethod
+    def _overlay_layout_mode(width: float, height: float) -> str:
+        aspect_ratio = width / max(height, 1.0)
+        if aspect_ratio < 0.9:
+            return "portrait"
+        if aspect_ratio < 1.35:
+            return "compact"
+        return "wide"
+
+    def _performance_overlay_heights(self, overlay_layout: str, overlay_scale: float) -> tuple[float, float]:
+        if overlay_layout == "portrait":
+            top_height = 224 * overlay_scale if self.settings.show_time_overlay or self.settings.show_stats_overlay else 46 * overlay_scale
+            bottom_height = 146 * overlay_scale if self.settings.show_chord_overlay else 54 * overlay_scale
+            return top_height, bottom_height
+        if overlay_layout == "compact":
+            top_height = 212 * overlay_scale if self.settings.show_time_overlay or self.settings.show_stats_overlay else 44 * overlay_scale
+            bottom_height = 126 * overlay_scale if self.settings.show_chord_overlay else 50 * overlay_scale
+            return top_height, bottom_height
+        top_height = 128 * overlay_scale if self.settings.show_time_overlay or self.settings.show_stats_overlay else 42 * overlay_scale
+        bottom_height = 112 * overlay_scale if self.settings.show_chord_overlay else 46 * overlay_scale
+        return top_height, bottom_height
 
     def _overlay_color(self, alpha: int) -> tuple[int, int, int, int]:
         return _with_alpha(self.settings.text_color, alpha)
