@@ -300,10 +300,11 @@ class ProjectRenderer:
         horizontal_padding = width * max(0.025, self.settings.horizontal_padding_ratio * 0.55)
         vertical_padding = height * max(0.04, self.settings.vertical_padding_ratio * 0.5)
         top_overlay_height, bottom_overlay_height = self._performance_overlay_heights(overlay_layout, overlay_scale)
+        lyric_gap_height = self._lyrics_reserve_height(overlay_layout, overlay_scale)
         left_padding = horizontal_padding
         right_padding = horizontal_padding
         top_padding = vertical_padding + top_overlay_height
-        bottom_padding = vertical_padding + bottom_overlay_height
+        bottom_padding = vertical_padding + bottom_overlay_height + lyric_gap_height
         plot_width = max(1.0, width - left_padding - right_padding)
         plot_height = max(1.0, height - top_padding - bottom_padding)
         measure_width = plot_width / max(1, visible_measure_count)
@@ -947,6 +948,15 @@ class ProjectRenderer:
         top_height = 128 * overlay_scale if self.settings.show_time_overlay or self.settings.show_stats_overlay else 42 * overlay_scale
         bottom_height = 112 * overlay_scale if self.settings.show_chord_overlay else 46 * overlay_scale
         return top_height, bottom_height
+
+    def _lyrics_reserve_height(self, overlay_layout: str, overlay_scale: float) -> float:
+        if not self.settings.show_chord_overlay:
+            return 0.0
+        if overlay_layout == "portrait":
+            return 132 * overlay_scale
+        if overlay_layout == "compact":
+            return 108 * overlay_scale
+        return 84 * overlay_scale
 
     def _overlay_color(self, alpha: int) -> tuple[int, int, int, int]:
         return _with_alpha(self.settings.text_color, alpha)
