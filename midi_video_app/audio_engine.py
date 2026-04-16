@@ -8,8 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
-from imageio_ffmpeg import get_ffmpeg_exe
 
+from .ffmpeg_runtime import get_stable_ffmpeg_exe
 from .models import MidiProject, NoteEvent
 
 
@@ -210,7 +210,7 @@ def _prepare_backing_track(
 
 @lru_cache(maxsize=6)
 def _decode_audio_file(path_str: str, sample_rate: int) -> np.ndarray:
-    ffmpeg_exe = get_ffmpeg_exe()
+    ffmpeg_exe = get_stable_ffmpeg_exe()
     command = [
         ffmpeg_exe,
         "-hide_banner",

@@ -11,9 +11,9 @@ from typing import Callable
 
 import imageio.v2 as imageio
 import numpy as np
-from imageio_ffmpeg import get_ffmpeg_exe
 
 from .audio_engine import AudioMixSettings, DEFAULT_AUDIO_SAMPLE_RATE, create_mixed_audio_wav
+from .ffmpeg_runtime import get_stable_ffmpeg_exe
 from .models import MidiProject
 from .renderer import ProjectRenderer
 
@@ -245,6 +245,8 @@ def _export_video_file(
     if writer_kwargs:
         writer_options.update(writer_kwargs)
 
+    get_stable_ffmpeg_exe()
+
     with tempfile.TemporaryDirectory(prefix="midi_video_export_") as temp_dir:
         temp_output = Path(temp_dir) / temp_file_name
         with imageio.get_writer(temp_output, **writer_options) as writer:
@@ -340,7 +342,7 @@ def _export_png_sequence(
 
 
 def _mux_audio_track(video_path: Path, audio_path: Path, output_path: Path, export_format: str) -> None:
-    ffmpeg_exe = get_ffmpeg_exe()
+    ffmpeg_exe = get_stable_ffmpeg_exe()
     audio_codec = ["-c:a", "pcm_s16le"] if export_format == ".mov" else ["-c:a", "aac", "-b:a", "192k"]
     extra_params = ["-movflags", "+faststart"] if export_format == ".mp4" else []
     command = [
