@@ -235,7 +235,7 @@ function syncExportUiState({ queue = false } = {}) {
   const exportFormat = getSelectedExportFormat();
   const exportOrientation = getSelectedExportOrientation();
   const { width, height } = getSelectedExportDimensions();
-  const allowTransparency = exportFormat === "mov" || exportFormat === "png_sequence";
+  const allowTransparency = exportFormat === "mov" || exportFormat === "webm_vp9" || exportFormat === "png_sequence";
   if (!allowTransparency) {
     elements.transparentBackgroundCheckbox.checked = false;
   }
@@ -244,6 +244,9 @@ function syncExportUiState({ queue = false } = {}) {
   if (exportFormat === "mov") {
     elements.exportButton.textContent = "MOVを書き出し";
     elements.exportHintText.textContent = "MOV は背景透過ありでも書き出せます。編集ソフト向けに使いやすい形式です。";
+  } else if (exportFormat === "webm_vp9") {
+    elements.exportButton.textContent = "WebM VP9を書き出し";
+    elements.exportHintText.textContent = "WebM VP9 は背景透過に対応した圧縮動画です。Windows では Edge / Chrome などで確認しやすい形式です。";
   } else if (exportFormat === "png_sequence") {
     elements.exportButton.textContent = "連番PNGを書き出し";
     elements.exportHintText.textContent = "連番PNGは1フレームずつ保存します。背景透過にも対応します。";
@@ -770,7 +773,7 @@ async function exportVideo() {
   const fps = normalizeFpsInput();
   const exportFormat = getSelectedExportFormat();
   const { width, height } = getSelectedExportDimensions();
-  const exportLabel = exportFormat === "png_sequence" ? "連番PNG" : exportFormat === "mov" ? "MOV" : "H.264";
+  const exportLabel = exportFormat === "png_sequence" ? "連番PNG" : exportFormat === "mov" ? "MOV" : exportFormat === "webm_vp9" ? "WebM VP9" : "H.264";
   setStatus(`${exportLabel}を書き出しています... ${fps}FPS / ${width}x${height}`);
   elements.exportButton.disabled = true;
 

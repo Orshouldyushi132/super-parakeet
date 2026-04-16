@@ -1,3 +1,8 @@
+dist/
+dist_*/
 dist_refresh/
+build/
+build_*/
 build_refresh/
 __pycache__/
+**/__pycache__/

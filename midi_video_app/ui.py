@@ -17,6 +17,7 @@ from .exporter import (
     EXPORT_FORMAT_CHOICES,
     EXPORT_FORMAT_H264,
     EXPORT_FORMAT_MOV,
+    EXPORT_FORMAT_WEBM_VP9,
     EXPORT_ORIENTATION_CHOICES,
     EXPORT_FORMAT_PNG_SEQUENCE,
     EXPORT_RESOLUTION_PRESETS,
@@ -1078,11 +1079,13 @@ class MidiVideoApp:
     def _update_export_option_state(self) -> None:
         export_format = self._selected_export_format()
         width, height = self._selected_export_dimensions()
-        allow_transparency = export_format in {EXPORT_FORMAT_MOV, EXPORT_FORMAT_PNG_SEQUENCE}
+        allow_transparency = export_format in {EXPORT_FORMAT_MOV, EXPORT_FORMAT_WEBM_VP9, EXPORT_FORMAT_PNG_SEQUENCE}
 
         self.export_dimension_var.set(f"{width} x {height}")
         if export_format == EXPORT_FORMAT_H264:
             self.export_hint_var.set("H.264 は MP4 で書き出します。背景透過は使えませんが、MIDI音と追加音声は一緒に入れられます。")
+        elif export_format == EXPORT_FORMAT_WEBM_VP9:
+            self.export_hint_var.set("WebM VP9 は背景透過に対応した圧縮動画です。Windows では Edge / Chrome などで確認しやすい形式です。")
         elif export_format == EXPORT_FORMAT_MOV:
             self.export_hint_var.set("MOV は背景透過ありでも書き出せます。MIDI音や追加音声も一緒に書き出せる、編集向けの形式です。")
         else:
@@ -1133,8 +1136,15 @@ class MidiVideoApp:
                 f"{self.project.source_path.stem}_連番PNG",
             )
         else:
-            extension = ".mov" if export_format == EXPORT_FORMAT_MOV else ".mp4"
-            format_label = "MOV" if export_format == EXPORT_FORMAT_MOV else "H.264 MP4"
+            if export_format == EXPORT_FORMAT_MOV:
+                extension = ".mov"
+                format_label = "MOV"
+            elif export_format == EXPORT_FORMAT_WEBM_VP9:
+                extension = ".webm"
+                format_label = "WebM VP9"
+            else:
+                extension = ".mp4"
+                format_label = "H.264 MP4"
             default_name = f"{self.project.source_path.stem}_{resolution.value}_{orientation}_{width}x{height}{extension}"
             output_path = filedialog.asksaveasfilename(
                 title=f"{format_label}の保存先を選択",
@@ -1187,7 +1197,7 @@ class MidiVideoApp:
                 f"連番PNGを書き出しました:\n{output_display_path}"
                 + ("\n音声は同じフォルダに WAV として保存されています。" if audio_mix_settings.has_audio() else "")
                 if export_format == EXPORT_FORMAT_PNG_SEQUENCE
-                else f"{'MOV' if export_format == EXPORT_FORMAT_MOV else 'H.264 MP4'}を書き出しました:\n{output_display_path}"
+                else f"{self._export_format_value_to_label.get(export_format, '動画')}を書き出しました:\n{output_display_path}"
             )
             self.root.after(0, lambda: messagebox.showinfo("書き出し完了", completion_message))
             self.root.after(0, lambda: self.status_var.set("書き出しが完了しました。"))

@@ -925,7 +925,8 @@ class ProjectRenderer:
 
     @staticmethod
     def _overlay_scale(width: float, height: float) -> float:
-        return max(0.85, min(width / 1920.0, height / 1080.0, 1.35))
+        base_scale = math.sqrt(max(1.0, width * height) / (1920.0 * 1080.0))
+        return max(0.85, min(base_scale, 2.4))
 
     @staticmethod
     def _overlay_layout_mode(width: float, height: float) -> str:

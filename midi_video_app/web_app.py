@@ -19,6 +19,7 @@ from .exporter import (
     EXPORT_FORMAT_CHOICES,
     EXPORT_FORMAT_H264,
     EXPORT_FORMAT_MOV,
+    EXPORT_FORMAT_WEBM_VP9,
     EXPORT_ORIENTATION_CHOICES,
     EXPORT_FORMAT_PNG_SEQUENCE,
     EXPORT_RESOLUTION_PRESETS,
@@ -228,7 +229,7 @@ def export_project(project_id: str):
     width = _coerce_int(payload.get("width"), 1920, 320, 3840)
     height = _coerce_int(payload.get("height"), 1080, 180, 3840)
     export_format = str(payload.get("format", DEFAULT_EXPORT_FORMAT)).strip().lower()
-    if export_format not in {EXPORT_FORMAT_H264, EXPORT_FORMAT_MOV, EXPORT_FORMAT_PNG_SEQUENCE}:
+    if export_format not in {EXPORT_FORMAT_H264, EXPORT_FORMAT_MOV, EXPORT_FORMAT_WEBM_VP9, EXPORT_FORMAT_PNG_SEQUENCE}:
         export_format = DEFAULT_EXPORT_FORMAT
     if export_format == EXPORT_FORMAT_H264:
         settings.transparent_background = False
@@ -264,7 +265,15 @@ def export_project(project_id: str):
         response.call_on_close(cleanup_png)
         return response
 
-    file_suffix = ".mov" if export_format == EXPORT_FORMAT_MOV else ".mp4"
+    if export_format == EXPORT_FORMAT_MOV:
+        file_suffix = ".mov"
+        mimetype = "video/quicktime"
+    elif export_format == EXPORT_FORMAT_WEBM_VP9:
+        file_suffix = ".webm"
+        mimetype = "video/webm"
+    else:
+        file_suffix = ".mp4"
+        mimetype = "video/mp4"
     output_path = TEMP_ROOT / f"{project_id}_{uuid.uuid4().hex}{file_suffix}"
     final_output_path = export_video(
         project=stored_project.project,
@@ -280,7 +289,7 @@ def export_project(project_id: str):
         final_output_path,
         as_attachment=True,
         download_name=f"{source_stem}_{width}x{height}{file_suffix}",
-        mimetype="video/quicktime" if export_format == EXPORT_FORMAT_MOV else "video/mp4",
+        mimetype=mimetype,
     )
     response.call_on_close(lambda: final_output_path.unlink(missing_ok=True))
     return response

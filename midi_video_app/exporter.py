@@ -22,6 +22,7 @@ ProgressCallback = Callable[[float, str], None]
 
 EXPORT_FORMAT_H264 = "h264"
 EXPORT_FORMAT_MOV = "mov"
+EXPORT_FORMAT_WEBM_VP9 = "webm_vp9"
 EXPORT_FORMAT_PNG_SEQUENCE = "png_sequence"
 DEFAULT_EXPORT_FORMAT = EXPORT_FORMAT_H264
 
@@ -46,6 +47,7 @@ class ExportResolutionPreset:
 
 EXPORT_FORMAT_CHOICES: tuple[tuple[str, str], ...] = (
     (EXPORT_FORMAT_H264, "H.264 MP4"),
+    (EXPORT_FORMAT_WEBM_VP9, "WebM VP9"),
     (EXPORT_FORMAT_MOV, "MOV"),
     (EXPORT_FORMAT_PNG_SEQUENCE, "連番PNG"),
 )
@@ -134,6 +136,18 @@ def export_video(
             audio_mix_settings=audio_mix_settings,
         )
 
+    if normalized_format == EXPORT_FORMAT_WEBM_VP9:
+        return _export_webm_vp9(
+            project=project,
+            renderer=renderer,
+            output_path=output_path,
+            width=width,
+            height=height,
+            fps=fps,
+            progress_callback=progress_callback,
+            audio_mix_settings=audio_mix_settings,
+        )
+
     return _export_h264(
         project=project,
         renderer=renderer,
@@ -204,6 +218,58 @@ def _export_mov(
         color_mode=color_mode,
         writer_kwargs={"output_params": ["-profile:v", profile]},
         progress_label="MOV",
+        audio_mix_settings=audio_mix_settings,
+    )
+
+
+def _export_webm_vp9(
+    project: MidiProject,
+    renderer: ProjectRenderer,
+    output_path: str | Path,
+    width: int,
+    height: int,
+    fps: int,
+    progress_callback: ProgressCallback | None,
+    audio_mix_settings: AudioMixSettings | None,
+) -> Path:
+    use_alpha = bool(getattr(renderer.settings, "transparent_background", False))
+    output_params = [
+        "-crf",
+        "30",
+        "-b:v",
+        "0",
+        "-deadline",
+        "good",
+        "-cpu-used",
+        "4",
+        "-row-mt",
+        "1",
+        "-auto-alt-ref",
+        "0",
+    ]
+    if use_alpha:
+        output_params = [
+            "-vf",
+            "format=yuva420p",
+            "-metadata:s:v:0",
+            "alpha_mode=1",
+            *output_params,
+        ]
+    return _export_video_file(
+        project=project,
+        renderer=renderer,
+        output_path=output_path,
+        width=width,
+        height=height,
+        fps=fps,
+        progress_callback=progress_callback,
+        file_suffix=".webm",
+        temp_file_name="export.webm",
+        codec="libvpx-vp9",
+        pixelformat="yuva420p" if use_alpha else "yuv420p",
+        color_mode="RGBA" if use_alpha else "RGB",
+        writer_kwargs={"output_params": output_params},
+        progress_label="WebM VP9",
         audio_mix_settings=audio_mix_settings,
     )
 
@@ -343,7 +409,12 @@ def _export_png_sequence(
 
 def _mux_audio_track(video_path: Path, audio_path: Path, output_path: Path, export_format: str) -> None:
     ffmpeg_exe = get_stable_ffmpeg_exe()
-    audio_codec = ["-c:a", "pcm_s16le"] if export_format == ".mov" else ["-c:a", "aac", "-b:a", "192k"]
+    if export_format == ".mov":
+        audio_codec = ["-c:a", "pcm_s16le"]
+    elif export_format == ".webm":
+        audio_codec = ["-c:a", "libopus", "-b:a", "160k"]
+    else:
+        audio_codec = ["-c:a", "aac", "-b:a", "192k"]
     extra_params = ["-movflags", "+faststart"] if export_format == ".mp4" else []
     command = [
         ffmpeg_exe,
