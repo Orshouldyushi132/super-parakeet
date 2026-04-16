@@ -61,6 +61,21 @@ PREVIEW_MAX_WIDTH = 960
 PREVIEW_MAX_HEIGHT = 540
 DEFAULT_FPS = 120
 
+PATH_DISPLAY_FILENAME = "filename"
+PATH_DISPLAY_FOLDER_AND_FILE = "folder_and_file"
+PATH_DISPLAY_DIRECTORY = "directory"
+PATH_DISPLAY_FULL = "full"
+PATH_DISPLAY_HIDDEN = "hidden"
+DEFAULT_PATH_DISPLAY = PATH_DISPLAY_FULL
+
+PATH_DISPLAY_CHOICES: tuple[tuple[str, str], ...] = (
+    (PATH_DISPLAY_FILENAME, "ファイル名だけ"),
+    (PATH_DISPLAY_FOLDER_AND_FILE, "フォルダ名 + ファイル名"),
+    (PATH_DISPLAY_DIRECTORY, "ディレクトリパス"),
+    (PATH_DISPLAY_FULL, "フルパス"),
+    (PATH_DISPLAY_HIDDEN, "非表示"),
+)
+
 
 class MidiVideoApp:
     def __init__(self, root: tk.Tk) -> None:
@@ -107,6 +122,8 @@ class MidiVideoApp:
         self._export_orientation_label_to_value = {label: value for value, label in EXPORT_ORIENTATION_CHOICES}
         self._export_resolution_value_to_label = {preset.value: preset.label for preset in EXPORT_RESOLUTION_PRESETS}
         self._export_resolution_label_to_value = {preset.label: preset.value for preset in EXPORT_RESOLUTION_PRESETS}
+        self._path_display_value_to_label = {value: label for value, label in PATH_DISPLAY_CHOICES}
+        self._path_display_label_to_value = {label: value for value, label in PATH_DISPLAY_CHOICES}
         self._theme_names = theme_name_choices()
 
         self.file_label_var = tk.StringVar(value="MIDIファイルが読み込まれていません")
@@ -122,6 +139,7 @@ class MidiVideoApp:
         self.export_dimension_var = tk.StringVar()
         self.export_hint_var = tk.StringVar()
         self.preset_name_var = tk.StringVar()
+        self.path_display_var = tk.StringVar(value=self._path_display_value_to_label[DEFAULT_PATH_DISPLAY])
 
         self.theme_var = tk.StringVar(value=DEFAULT_THEME_NAME)
         self.view_mode_var = tk.StringVar(value=self._view_mode_value_to_label[self.render_settings.view_mode])
@@ -411,6 +429,18 @@ class MidiVideoApp:
         )
         self.view_mode_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
         self.view_mode_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
+        row += 1
+        ttk.Label(panel, text="パス表示").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.path_display_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in PATH_DISPLAY_CHOICES],
+            textvariable=self.path_display_var,
+            width=16,
+        )
+        self.path_display_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.path_display_combo.bind("<<ComboboxSelected>>", self._on_path_display_changed)
 
         row += 1
         self._add_slider_control(
@@ -915,7 +945,7 @@ class MidiVideoApp:
         self.current_time_sec = 0.0
         self.playing = False
         self.timeline.configure(to=max(self.project.duration_sec, 0.001))
-        self.file_label_var.set(str(Path(midi_path)))
+        self._refresh_path_labels()
         self.status_var.set("MIDIを読み込みました。小節ごとの切り替え表示でプレビューできます。")
         self.progress.configure(value=0.0)
         self._refresh_preview()
@@ -984,6 +1014,42 @@ class MidiVideoApp:
     def _selected_export_dimensions(self) -> tuple[int, int]:
         preset = self._selected_export_resolution_preset()
         return get_export_dimensions(preset.value, self._selected_export_orientation())
+
+    def _selected_path_display_mode(self) -> str:
+        return self._path_display_label_to_value.get(self.path_display_var.get(), DEFAULT_PATH_DISPLAY)
+
+    def _format_path_for_display(self, path: Path, *, hidden_text: str) -> str:
+        mode = self._selected_path_display_mode()
+        resolved_path = Path(path)
+        if mode == PATH_DISPLAY_FILENAME:
+            return resolved_path.name
+        if mode == PATH_DISPLAY_FOLDER_AND_FILE:
+            parent_name = resolved_path.parent.name
+            return f"{parent_name}\\{resolved_path.name}" if parent_name else resolved_path.name
+        if mode == PATH_DISPLAY_DIRECTORY:
+            return str(resolved_path.parent)
+        if mode == PATH_DISPLAY_HIDDEN:
+            return hidden_text
+        return str(resolved_path)
+
+    def _refresh_path_labels(self) -> None:
+        if self.project is None:
+            self.file_label_var.set("MIDIファイルが読み込まれていません")
+        else:
+            midi_display = self._format_path_for_display(
+                self.project.source_path,
+                hidden_text="読み込み済み",
+            )
+            self.file_label_var.set(f"MIDIファイル: {midi_display}")
+
+        if self.backing_audio_path is None:
+            self.backing_audio_path_var.set("追加の音声ファイル: なし")
+        else:
+            audio_display = self._format_path_for_display(
+                self.backing_audio_path,
+                hidden_text="選択済み",
+            )
+            self.backing_audio_path_var.set(f"追加の音声ファイル: {audio_display}")
 
     def _get_preview_dimensions(self) -> tuple[int, int]:
         width, height = self._selected_export_dimensions()
@@ -1081,6 +1147,10 @@ class MidiVideoApp:
             if Path(output_path).suffix.lower() != extension:
                 output_path = str(Path(output_path).with_suffix(extension))
 
+        output_display_path = self._format_path_for_display(
+            Path(output_path),
+            hidden_text="非表示",
+        )
         export_settings = clone_render_settings(self.render_settings)
         if export_format == EXPORT_FORMAT_H264:
             export_settings.transparent_background = False
@@ -1114,10 +1184,10 @@ class MidiVideoApp:
                 return
 
             completion_message = (
-                f"連番PNGを書き出しました:\n{saved_path}"
+                f"連番PNGを書き出しました:\n{output_display_path}"
                 + ("\n音声は同じフォルダに WAV として保存されています。" if audio_mix_settings.has_audio() else "")
                 if export_format == EXPORT_FORMAT_PNG_SEQUENCE
-                else f"{'MOV' if export_format == EXPORT_FORMAT_MOV else 'H.264 MP4'}を書き出しました:\n{saved_path}"
+                else f"{'MOV' if export_format == EXPORT_FORMAT_MOV else 'H.264 MP4'}を書き出しました:\n{output_display_path}"
             )
             self.root.after(0, lambda: messagebox.showinfo("書き出し完了", completion_message))
             self.root.after(0, lambda: self.status_var.set("書き出しが完了しました。"))
@@ -1145,12 +1215,12 @@ class MidiVideoApp:
         if not audio_path:
             return
         self.backing_audio_path = Path(audio_path)
-        self.backing_audio_path_var.set(f"追加の音声ファイル: {audio_path}")
+        self._refresh_path_labels()
         self._on_audio_option_changed()
 
     def _clear_backing_audio(self) -> None:
         self.backing_audio_path = None
-        self.backing_audio_path_var.set("追加の音声ファイル: なし")
+        self._refresh_path_labels()
         self._on_audio_option_changed()
 
     def _on_audio_option_changed(self, _raw_value=None) -> None:
@@ -1160,6 +1230,9 @@ class MidiVideoApp:
             self.playback_origin_sec = self.current_time_sec
             self._start_audio_preview()
             self.playback_started_at = time.perf_counter()
+
+    def _on_path_display_changed(self, _event=None) -> None:
+        self._refresh_path_labels()
 
     def _start_audio_preview(self) -> None:
         if not self.project:
