@@ -15,6 +15,13 @@ except ImportError:  # pragma: no cover - optional dependency
     aggdraw = None
 
 
+# Keep export HUD sizing proportional to the desktop preview canvas.
+PREVIEW_REFERENCE_MAX_WIDTH = 960.0
+PREVIEW_REFERENCE_MAX_HEIGHT = 540.0
+MIN_OVERLAY_SCALE = 0.85
+MAX_OVERLAY_SCALE = 8.0
+
+
 _FONT_CANDIDATES: dict[str, tuple[str, ...]] = {
     "light": (
         "C:/Windows/Fonts/YuGothL.ttc",
@@ -326,6 +333,7 @@ class ProjectRenderer:
                 plot_height,
                 current_measure,
                 overlay_layout,
+                overlay_scale,
             )
 
         active_items: list[_ActiveRenderItem] = []
@@ -440,7 +448,16 @@ class ProjectRenderer:
         draw.flush()
 
         if self.settings.show_playhead:
-            self._draw_playhead(draw, clamped_time, visible_measures, left_padding, top_padding, measure_width, plot_height)
+            self._draw_playhead(
+                draw,
+                clamped_time,
+                visible_measures,
+                left_padding,
+                top_padding,
+                measure_width,
+                plot_height,
+                overlay_scale,
+            )
         self._draw_performance_overlays(
             draw,
             clamped_time,
@@ -540,10 +557,14 @@ class ProjectRenderer:
         plot_height: float,
         current_measure: Measure,
         overlay_layout: str,
+        overlay_scale: float,
     ) -> None:
-        overlay_scale = self._overlay_scale(measure_width * max(1, len(visible_measures)), plot_height)
         max_label_size = 26 if overlay_layout == "wide" else 22 if overlay_layout == "compact" else 18
-        label_size = max(12, min(int(plot_height * 0.025), int(max_label_size * overlay_scale), int(measure_width * 0.18)))
+        minimum_label_size = max(12, int(round(12 * self._relative_overlay_scale(overlay_scale))))
+        label_size = max(
+            minimum_label_size,
+            min(int(plot_height * 0.025), int(max_label_size * overlay_scale), int(measure_width * 0.18)),
+        )
         label_font = _load_font(label_size, "light")
         label_y = top_padding - getattr(label_font, "size", label_size) - max(6, int(8 * overlay_scale))
         for slot_index, measure in enumerate(visible_measures):
@@ -586,6 +607,7 @@ class ProjectRenderer:
         top_padding: float,
         measure_width: float,
         plot_height: float,
+        overlay_scale: float,
     ) -> None:
         current_measure = self.get_measure_for_time(time_sec)
         try:
@@ -595,7 +617,6 @@ class ProjectRenderer:
 
         beat_ratio = (self._current_beat_in_measure(current_measure, time_sec) - 1.0) / max(current_measure.numerator, 1)
         playhead_x = left_padding + slot_index * measure_width + measure_width * _clamp(beat_ratio)
-        overlay_scale = self._overlay_scale(measure_width * max(1, len(visible_measures)), plot_height)
         line_top = top_padding - 12 * overlay_scale
         line_bottom = top_padding + plot_height + 12 * overlay_scale
         glow_color = _with_alpha(self.settings.animation_accent_color, 42)
@@ -925,8 +946,29 @@ class ProjectRenderer:
 
     @staticmethod
     def _overlay_scale(width: float, height: float) -> float:
-        base_scale = math.sqrt(max(1.0, width * height) / (1920.0 * 1080.0))
-        return max(0.85, min(base_scale, 2.4))
+        reference_width, reference_height = ProjectRenderer._preview_reference_size(width, height)
+        base_scale = math.sqrt(max(1.0, reference_width * reference_height) / (1920.0 * 1080.0))
+        base_scale = max(MIN_OVERLAY_SCALE, min(base_scale, 2.4))
+        if width <= reference_width + 1e-6 and height <= reference_height + 1e-6:
+            return base_scale
+        output_scale = min(width / max(reference_width, 1.0), height / max(reference_height, 1.0))
+        return max(MIN_OVERLAY_SCALE, min(base_scale * output_scale, MAX_OVERLAY_SCALE))
+
+    @staticmethod
+    def _preview_reference_size(width: float, height: float) -> tuple[float, float]:
+        aspect_ratio = max(1e-6, width / max(height, 1.0))
+        max_reference_ratio = PREVIEW_REFERENCE_MAX_WIDTH / PREVIEW_REFERENCE_MAX_HEIGHT
+        if aspect_ratio >= max_reference_ratio:
+            reference_width = PREVIEW_REFERENCE_MAX_WIDTH
+            reference_height = max(1.0, reference_width / aspect_ratio)
+        else:
+            reference_height = PREVIEW_REFERENCE_MAX_HEIGHT
+            reference_width = max(1.0, reference_height * aspect_ratio)
+        return reference_width, reference_height
+
+    @staticmethod
+    def _relative_overlay_scale(overlay_scale: float) -> float:
+        return max(1.0, overlay_scale / MIN_OVERLAY_SCALE)
 
     @staticmethod
     def _overlay_layout_mode(width: float, height: float) -> str:
