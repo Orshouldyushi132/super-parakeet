@@ -6,3 +6,4 @@ build_*/
 build_refresh/
 __pycache__/
 **/__pycache__/
+.tmp_export_checks/

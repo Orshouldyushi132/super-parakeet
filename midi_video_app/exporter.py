@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-import imageio.v2 as imageio
 import numpy as np
 
 from .audio_engine import AudioMixSettings, DEFAULT_AUDIO_SAMPLE_RATE, create_mixed_audio_wav
@@ -19,6 +18,7 @@ from .renderer import ProjectRenderer
 
 
 ProgressCallback = Callable[[float, str], None]
+FFMPEG_STDIN_CHUNK_SIZE = 64 * 1024
 
 EXPORT_FORMAT_H264 = "h264"
 EXPORT_FORMAT_MOV = "mov"
@@ -170,7 +170,7 @@ def _export_h264(
     progress_callback: ProgressCallback | None,
     audio_mix_settings: AudioMixSettings | None,
 ) -> Path:
-    return _export_video_file(
+    return _export_video_file_chunked(
         project=project,
         renderer=renderer,
         output_path=output_path,
@@ -183,7 +183,7 @@ def _export_h264(
         codec="libx264",
         pixelformat="yuv420p",
         color_mode="RGB",
-        writer_kwargs={"quality": 8},
+        writer_kwargs={"output_params": ["-crf", "18", "-preset", "medium"]},
         progress_label="H.264",
         audio_mix_settings=audio_mix_settings,
     )
@@ -203,7 +203,7 @@ def _export_mov(
     pixelformat = "yuva444p10le" if use_alpha else "yuv422p10le"
     profile = "4" if use_alpha else "3"
     color_mode = "RGBA" if use_alpha else "RGB"
-    return _export_video_file(
+    return _export_video_file_chunked(
         project=project,
         renderer=renderer,
         output_path=output_path,
@@ -255,7 +255,7 @@ def _export_webm_vp9(
             "alpha_mode=1",
             *output_params,
         ]
-    return _export_video_file(
+    return _export_video_file_chunked(
         project=project,
         renderer=renderer,
         output_path=output_path,
@@ -274,7 +274,7 @@ def _export_webm_vp9(
     )
 
 
-def _export_video_file(
+def _export_video_file_chunked(
     project: MidiProject,
     renderer: ProjectRenderer,
     output_path: str | Path,
@@ -301,31 +301,25 @@ def _export_video_file(
     if progress_callback:
         progress_callback(0.0, f"{progress_label}を書き出しています...")
 
-    writer_options = {
-        "fps": fps,
-        "codec": codec,
-        "pixelformat": pixelformat,
-        "macro_block_size": None,
-        "ffmpeg_log_level": "error",
-    }
-    if writer_kwargs:
-        writer_options.update(writer_kwargs)
-
-    get_stable_ffmpeg_exe()
-
-    with tempfile.TemporaryDirectory(prefix="midi_video_export_") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="midi_video_export_", ignore_cleanup_errors=True) as temp_dir:
         temp_output = Path(temp_dir) / temp_file_name
-        with imageio.get_writer(temp_output, **writer_options) as writer:
-            for frame_index in range(total_frames):
-                current_time = _frame_time(project.duration_sec, fps, frame_index)
-                frame = renderer.render_frame(current_time, width, height)
-                writer.append_data(np.asarray(frame.convert(color_mode)))
+        _write_video_frames_with_ffmpeg(
+            project=project,
+            renderer=renderer,
+            output_path=temp_output,
+            width=width,
+            height=height,
+            fps=fps,
+            total_frames=total_frames,
+            codec=codec,
+            input_pixelformat="rgba" if color_mode == "RGBA" else "rgb24",
+            output_pixelformat=pixelformat,
+            output_params=_writer_output_params(writer_kwargs),
+            color_mode=color_mode,
+            progress_callback=progress_callback,
+            progress_label=progress_label,
+        )
 
-                if progress_callback:
-                    progress_callback(
-                        ((frame_index + 1) / total_frames) * 0.82,
-                        f"{progress_label}を書き出しています... {frame_index + 1}/{total_frames}",
-                    )
         final_temp_output = temp_output
         if audio_mix_settings and audio_mix_settings.has_audio():
             if progress_callback:
@@ -355,6 +349,120 @@ def _export_video_file(
     if progress_callback:
         progress_callback(1.0, f"書き出しが完了しました: {destination.name}")
     return destination
+
+
+def _writer_output_params(writer_kwargs: dict[str, object] | None) -> list[str]:
+    if not writer_kwargs:
+        return []
+    raw_params = writer_kwargs.get("output_params", [])
+    if not isinstance(raw_params, list | tuple):
+        return []
+    return [str(param) for param in raw_params]
+
+
+def _write_video_frames_with_ffmpeg(
+    *,
+    project: MidiProject,
+    renderer: ProjectRenderer,
+    output_path: Path,
+    width: int,
+    height: int,
+    fps: int,
+    total_frames: int,
+    codec: str,
+    input_pixelformat: str,
+    output_pixelformat: str,
+    output_params: list[str],
+    color_mode: str,
+    progress_callback: ProgressCallback | None,
+    progress_label: str,
+) -> None:
+    ffmpeg_exe = get_stable_ffmpeg_exe()
+    command = [
+        ffmpeg_exe,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-s",
+        f"{width}x{height}",
+        "-pix_fmt",
+        input_pixelformat,
+        "-r",
+        f"{fps:.2f}",
+        "-i",
+        "-",
+        "-an",
+        "-vcodec",
+        codec,
+        "-pix_fmt",
+        output_pixelformat,
+        *output_params,
+        str(output_path),
+    ]
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        if process.stdin is None:
+            raise RuntimeError("FFmpeg の入力パイプを開けませんでした。")
+        for frame_index in range(total_frames):
+            current_time = _frame_time(project.duration_sec, fps, frame_index)
+            frame = renderer.render_frame(current_time, width, height)
+            frame_array = np.ascontiguousarray(np.asarray(frame.convert(color_mode)))
+            try:
+                _write_frame_to_stdin(process, frame_array)
+            except OSError as error:
+                return_code = process.poll()
+                if return_code is None:
+                    process.kill()
+                    return_code = process.wait()
+                stderr = process.stderr.read() if process.stderr is not None else b""
+                _raise_ffmpeg_video_error(command, stderr, return_code if return_code is not None else error.errno)
+
+            if progress_callback:
+                progress_callback(
+                    ((frame_index + 1) / total_frames) * 0.82,
+                    f"{progress_label}を書き出しています... {frame_index + 1}/{total_frames}",
+                )
+        process.stdin.close()
+        stderr = process.stderr.read() if process.stderr is not None else b""
+        return_code = process.wait()
+    except Exception:
+        if process.stdin and not process.stdin.closed:
+            process.stdin.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        raise
+
+    if return_code != 0:
+        _raise_ffmpeg_video_error(command, stderr, return_code)
+
+
+def _write_frame_to_stdin(process: subprocess.Popen[bytes], frame_array: np.ndarray) -> None:
+    if process.stdin is None:
+        raise RuntimeError("FFmpeg の入力パイプを開けませんでした。")
+    frame_bytes = memoryview(frame_array).cast("B")
+    for offset in range(0, len(frame_bytes), FFMPEG_STDIN_CHUNK_SIZE):
+        process.stdin.write(frame_bytes[offset : offset + FFMPEG_STDIN_CHUNK_SIZE])
+
+
+def _raise_ffmpeg_video_error(command: list[str], stderr: bytes, return_code: int) -> None:
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    command_text = " ".join(command)
+    raise RuntimeError(
+        "FFmpeg で動画の書き出しに失敗しました。\n\n"
+        f"FFMPEG COMMAND:\n{command_text}\n\n"
+        f"FFMPEG STDERR OUTPUT:\n{stderr_text or return_code}"
+    )
 
 
 def _export_png_sequence(

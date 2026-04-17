@@ -25,13 +25,17 @@ MAX_OVERLAY_SCALE = 8.0
 _FONT_CANDIDATES: dict[str, tuple[str, ...]] = {
     "light": (
         "C:/Windows/Fonts/YuGothL.ttc",
+        "C:/Windows/Fonts/YuGothR.ttc",
+        "C:/Windows/Fonts/BIZ-UDGothicR.ttc",
         "C:/Windows/Fonts/meiryo.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
         "DejaVuSans.ttf",
     ),
     "regular": (
+        "C:/Windows/Fonts/YuGothL.ttc",
         "C:/Windows/Fonts/YuGothR.ttc",
+        "C:/Windows/Fonts/BIZ-UDGothicR.ttc",
         "C:/Windows/Fonts/meiryo.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
@@ -39,6 +43,7 @@ _FONT_CANDIDATES: dict[str, tuple[str, ...]] = {
     ),
     "bold": (
         "C:/Windows/Fonts/YuGothB.ttc",
+        "C:/Windows/Fonts/BIZ-UDGothicB.ttc",
         "C:/Windows/Fonts/meiryob.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
         "/System/Library/Fonts/Hiragino Sans GB.ttc",
@@ -687,11 +692,11 @@ class ProjectRenderer:
         divider_gap = (22 if overlay_layout == "wide" else 16 if overlay_layout == "compact" else 12) * overlay_scale
         line_height = 16 * overlay_scale
         label_font = _load_font(int(15 * overlay_scale), "light")
-        value_font = _load_font(int((34 if overlay_layout == "wide" else 30 if overlay_layout == "compact" else 27) * overlay_scale), "regular")
+        value_font = _load_font(int((34 if overlay_layout == "wide" else 30 if overlay_layout == "compact" else 27) * overlay_scale), "light")
         stat_label_font = _load_font(int(14 * overlay_scale), "light")
-        stat_value_font = _load_font(int((20 if overlay_layout == "wide" else 18 if overlay_layout == "compact" else 17) * overlay_scale), "regular")
+        stat_value_font = _load_font(int((20 if overlay_layout == "wide" else 18 if overlay_layout == "compact" else 17) * overlay_scale), "light")
         chord_label_font = _load_font(int((16 if overlay_layout == "wide" else 15 if overlay_layout == "compact" else 14) * overlay_scale), "light")
-        chord_font = _load_font(int((56 if overlay_layout == "wide" else 48 if overlay_layout == "compact" else 38) * overlay_scale), "regular")
+        chord_font = _load_font(int((56 if overlay_layout == "wide" else 48 if overlay_layout == "compact" else 38) * overlay_scale), "light")
         chord_notes_font = _load_font(int((21 if overlay_layout == "wide" else 19 if overlay_layout == "compact" else 17) * overlay_scale), "light")
         footer_font = _load_font(int(14 * overlay_scale), "light")
         label_y = top_y
