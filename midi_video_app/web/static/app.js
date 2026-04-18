@@ -50,6 +50,8 @@ const elements = {
   exportResolutionSummary: document.getElementById("exportResolutionSummary"),
   exportHintText: document.getElementById("exportHintText"),
   viewModeSelect: document.getElementById("viewModeSelect"),
+  fontFamilySelect: document.getElementById("fontFamilySelect"),
+  customFontPathInput: document.getElementById("customFontPathInput"),
   cornerStyleSelect: document.getElementById("cornerStyleSelect"),
   glowStyleSelect: document.getElementById("glowStyleSelect"),
   animationStyleSelect: document.getElementById("animationStyleSelect"),
@@ -113,6 +115,8 @@ const settingBindings = {
   outline_color: elements.outlineColorInput,
   text_color: elements.textColorInput,
   view_mode: elements.viewModeSelect,
+  font_family: elements.fontFamilySelect,
+  custom_font_path: elements.customFontPathInput,
   corner_style: elements.cornerStyleSelect,
   glow_style: elements.glowStyleSelect,
   animation_style: elements.animationStyleSelect,
@@ -853,6 +857,7 @@ function initialize() {
   populateSelect(elements.exportOrientationSelect, boot.exportOrientations || [], DEFAULT_EXPORT_ORIENTATION);
   populateSelect(elements.exportResolutionSelect, boot.exportResolutions || [], defaultExportResolution);
   populateSelect(elements.viewModeSelect, boot.choices.viewModes || [], boot.defaultSettings.view_mode);
+  populateSelect(elements.fontFamilySelect, boot.choices.fonts || [], boot.defaultSettings.font_family);
   populateSelect(elements.cornerStyleSelect, boot.choices.corners || [], boot.defaultSettings.corner_style);
   populateSelect(elements.glowStyleSelect, boot.choices.glows || [], boot.defaultSettings.glow_style);
   populateSelect(elements.animationStyleSelect, boot.choices.animations || [], boot.defaultSettings.animation_style);
@@ -909,6 +914,8 @@ function initialize() {
 
   [
     elements.viewModeSelect,
+    elements.fontFamilySelect,
+    elements.customFontPathInput,
     elements.cornerStyleSelect,
     elements.glowStyleSelect,
     elements.animationStyleSelect,

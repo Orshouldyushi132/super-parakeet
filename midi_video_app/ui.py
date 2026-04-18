@@ -35,6 +35,7 @@ from .models import (
     CORNER_STYLE_CHOICES,
     CUSTOM_THEME_NAME,
     DEFAULT_THEME_NAME,
+    FONT_FAMILY_CHOICES,
     GLOW_STYLE_CHOICES,
     RELEASE_FADE_CURVE_CHOICES,
     RELEASE_FADE_STYLE_CHOICES,
@@ -109,6 +110,8 @@ class MidiVideoApp:
         self._corner_label_to_value = {label: value for value, label in CORNER_STYLE_CHOICES}
         self._view_mode_value_to_label = {value: label for value, label in VIEW_MODE_CHOICES}
         self._view_mode_label_to_value = {label: value for value, label in VIEW_MODE_CHOICES}
+        self._font_family_value_to_label = {value: label for value, label in FONT_FAMILY_CHOICES}
+        self._font_family_label_to_value = {label: value for value, label in FONT_FAMILY_CHOICES}
         self._release_fade_value_to_label = {value: label for value, label in RELEASE_FADE_STYLE_CHOICES}
         self._release_fade_label_to_value = {label: value for value, label in RELEASE_FADE_STYLE_CHOICES}
         self._release_curve_value_to_label = {value: label for value, label in RELEASE_FADE_CURVE_CHOICES}
@@ -144,6 +147,13 @@ class MidiVideoApp:
 
         self.theme_var = tk.StringVar(value=DEFAULT_THEME_NAME)
         self.view_mode_var = tk.StringVar(value=self._view_mode_value_to_label[self.render_settings.view_mode])
+        self.font_family_var = tk.StringVar(
+            value=self._font_family_value_to_label.get(
+                self.render_settings.font_family,
+                self._font_family_value_to_label["modern_light"],
+            )
+        )
+        self.custom_font_path_var = tk.StringVar(value="カスタムフォント: 未選択")
         self.corner_style_var = tk.StringVar(value=self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var = tk.StringVar(value=self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var = tk.StringVar(value=self._animation_value_to_label[self.render_settings.animation_style])
@@ -430,6 +440,42 @@ class MidiVideoApp:
         )
         self.view_mode_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
         self.view_mode_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
+        row += 1
+        ttk.Label(panel, text="文字フォント").grid(row=row, column=0, sticky="w", pady=(8, 0))
+        self.font_family_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in FONT_FAMILY_CHOICES],
+            textvariable=self.font_family_var,
+            width=16,
+        )
+        self.font_family_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+        self.font_family_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
+        row += 1
+        font_file_frame = ttk.Frame(panel)
+        font_file_frame.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        font_file_frame.columnconfigure(0, weight=1)
+        ttk.Label(font_file_frame, textvariable=self.custom_font_path_var, style="Muted.TLabel", wraplength=320, justify="left").grid(
+            row=0,
+            column=0,
+            columnspan=2,
+            sticky="w",
+        )
+        ttk.Button(font_file_frame, text="フォントファイルを選択", command=self._choose_custom_font).grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            pady=(6, 0),
+        )
+        ttk.Button(font_file_frame, text="カスタムフォントを解除", command=self._clear_custom_font).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(6, 0),
+        )
 
         row += 1
         ttk.Label(panel, text="パス表示").grid(row=row, column=0, sticky="w", pady=(8, 0))
@@ -1052,6 +1098,18 @@ class MidiVideoApp:
             )
             self.backing_audio_path_var.set(f"追加の音声ファイル: {audio_display}")
 
+    def _refresh_custom_font_label(self) -> None:
+        font_path = getattr(self.render_settings, "custom_font_path", "")
+        if not font_path:
+            self.custom_font_path_var.set("カスタムフォント: 未選択")
+            return
+
+        font_display = self._format_path_for_display(
+            Path(font_path),
+            hidden_text="選択済み",
+        )
+        self.custom_font_path_var.set(f"カスタムフォント: {font_display}")
+
     def _get_preview_dimensions(self) -> tuple[int, int]:
         width, height = self._selected_export_dimensions()
         ratio = width / max(height, 1)
@@ -1243,6 +1301,7 @@ class MidiVideoApp:
 
     def _on_path_display_changed(self, _event=None) -> None:
         self._refresh_path_labels()
+        self._refresh_custom_font_label()
 
     def _start_audio_preview(self) -> None:
         if not self.project:
@@ -1312,6 +1371,34 @@ class MidiVideoApp:
         self._stop_audio_preview()
         self._refresh_preview()
 
+    def _choose_custom_font(self) -> None:
+        font_path = filedialog.askopenfilename(
+            title="フォントファイルを選択",
+            filetypes=[
+                ("フォントファイル", "*.ttf *.ttc *.otf"),
+                ("すべてのファイル", "*.*"),
+            ],
+        )
+        if not font_path:
+            return
+
+        self.render_settings.custom_font_path = str(Path(font_path))
+        if self.renderer:
+            self.renderer.set_settings(self.render_settings)
+        self.theme_var.set(CUSTOM_THEME_NAME)
+        self.preset_name_var.set("")
+        self._refresh_custom_font_label()
+        self._refresh_preview_if_loaded()
+
+    def _clear_custom_font(self) -> None:
+        self.render_settings.custom_font_path = ""
+        if self.renderer:
+            self.renderer.set_settings(self.render_settings)
+        self.theme_var.set(CUSTOM_THEME_NAME)
+        self.preset_name_var.set("")
+        self._refresh_custom_font_label()
+        self._refresh_preview_if_loaded()
+
     def _choose_color(self, field_name: str) -> None:
         initial_color = getattr(self.render_settings, field_name)
         selected = colorchooser.askcolor(color=initial_color, title=f"{self._color_labels[field_name]}を選択", parent=self.root)
@@ -1355,6 +1442,10 @@ class MidiVideoApp:
             return
 
         self.render_settings.view_mode = self._view_mode_label_to_value[self.view_mode_var.get()]
+        self.render_settings.font_family = self._font_family_label_to_value.get(
+            self.font_family_var.get(),
+            "modern_light",
+        )
         self.render_settings.corner_style = self._corner_label_to_value[self.corner_style_var.get()]
         self.render_settings.glow_style = self._glow_label_to_value[self.glow_style_var.get()]
         self.render_settings.animation_style = self._animation_label_to_value[self.animation_style_var.get()]
@@ -1422,6 +1513,12 @@ class MidiVideoApp:
         self._refresh_theme_choices(selected_theme)
         self.theme_var.set(selected_theme)
         self.view_mode_var.set(self._view_mode_value_to_label[self.render_settings.view_mode])
+        self.font_family_var.set(
+            self._font_family_value_to_label.get(
+                self.render_settings.font_family,
+                self._font_family_value_to_label["modern_light"],
+            )
+        )
         self.corner_style_var.set(self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var.set(self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var.set(self._animation_value_to_label[self.render_settings.animation_style])
@@ -1465,6 +1562,7 @@ class MidiVideoApp:
         self.preset_name_var.set(selected_theme if is_user_preset(selected_theme) else "")
         self._update_preset_button_states()
         self._update_export_option_state()
+        self._refresh_custom_font_label()
 
         self._updating_style_controls = False
 

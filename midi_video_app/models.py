@@ -56,6 +56,8 @@ class RenderSettings:
     animation_accent_color: str = "#7dd3fc"
     outline_color: str = "#ffffff"
     text_color: str = "#ffffff"
+    font_family: str = "modern_light"
+    custom_font_path: str = ""
     corner_style: str = "rounded"
     glow_style: str = "soft"
     animation_style: str = "pulse"
@@ -105,6 +107,16 @@ CORNER_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
 VIEW_MODE_CHOICES: tuple[tuple[str, str], ...] = (
     ("performance", "演奏ビュー"),
     ("measure_page", "固定ページ"),
+)
+
+FONT_FAMILY_CHOICES: tuple[tuple[str, str], ...] = (
+    ("modern_light", "モダン細字"),
+    ("yu_gothic", "游ゴシック"),
+    ("biz_ud_gothic", "BIZ UDゴシック"),
+    ("meiryo", "メイリオ"),
+    ("noto_sans_jp", "Noto Sans JP"),
+    ("hiragino", "ヒラギノ角ゴ"),
+    ("deja_vu", "DejaVu Sans"),
 )
 
 GLOW_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
@@ -388,6 +400,7 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
 
     choice_sets = {
         "view_mode": {value for value, _ in VIEW_MODE_CHOICES},
+        "font_family": {value for value, _ in FONT_FAMILY_CHOICES},
         "corner_style": {value for value, _ in CORNER_STYLE_CHOICES},
         "glow_style": {value for value, _ in GLOW_STYLE_CHOICES},
         "animation_style": {value for value, _ in ANIMATION_STYLE_CHOICES},
@@ -428,6 +441,9 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "show_chord_overlay",
         "show_playhead",
     }
+    string_fields = {
+        "custom_font_path",
+    }
 
     for field_name in render_settings_to_dict(settings):
         if field_name not in data:
@@ -465,6 +481,11 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         if field_name in bool_fields:
             if isinstance(value, bool):
                 setattr(settings, field_name, value)
+            continue
+
+        if field_name in string_fields:
+            if isinstance(value, str):
+                setattr(settings, field_name, value.strip())
 
     return settings
 

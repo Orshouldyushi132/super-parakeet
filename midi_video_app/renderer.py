@@ -4,6 +4,7 @@ import math
 from bisect import bisect_right
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -22,46 +23,136 @@ MIN_OVERLAY_SCALE = 0.85
 MAX_OVERLAY_SCALE = 8.0
 
 
-_FONT_CANDIDATES: dict[str, tuple[str, ...]] = {
-    "light": (
-        "C:/Windows/Fonts/YuGothL.ttc",
-        "C:/Windows/Fonts/YuGothR.ttc",
-        "C:/Windows/Fonts/BIZ-UDGothicR.ttc",
-        "C:/Windows/Fonts/meiryo.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "DejaVuSans.ttf",
-    ),
-    "regular": (
-        "C:/Windows/Fonts/YuGothL.ttc",
-        "C:/Windows/Fonts/YuGothR.ttc",
-        "C:/Windows/Fonts/BIZ-UDGothicR.ttc",
-        "C:/Windows/Fonts/meiryo.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "DejaVuSans.ttf",
-    ),
-    "bold": (
-        "C:/Windows/Fonts/YuGothB.ttc",
-        "C:/Windows/Fonts/BIZ-UDGothicB.ttc",
-        "C:/Windows/Fonts/meiryob.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "DejaVuSans-Bold.ttf",
-    ),
+_DEFAULT_FONT_FAMILY = "modern_light"
+_FONT_CANDIDATES: dict[str, dict[str, tuple[str, ...]]] = {
+    "modern_light": {
+        "light": (
+            "C:/Windows/Fonts/YuGothL.ttc",
+            "C:/Windows/Fonts/YuGothR.ttc",
+            "C:/Windows/Fonts/BIZ-UDGothicR.ttc",
+            "/System/Library/Fonts/ヒラギノ角ゴシック W2.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "DejaVuSans.ttf",
+        ),
+        "regular": (
+            "C:/Windows/Fonts/YuGothL.ttc",
+            "C:/Windows/Fonts/YuGothR.ttc",
+            "C:/Windows/Fonts/BIZ-UDGothicR.ttc",
+            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "DejaVuSans.ttf",
+        ),
+        "bold": (
+            "C:/Windows/Fonts/YuGothB.ttc",
+            "C:/Windows/Fonts/BIZ-UDGothicB.ttc",
+            "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "DejaVuSans-Bold.ttf",
+        ),
+    },
+    "yu_gothic": {
+        "light": ("C:/Windows/Fonts/YuGothL.ttc", "C:/Windows/Fonts/YuGothR.ttc"),
+        "regular": ("C:/Windows/Fonts/YuGothR.ttc", "C:/Windows/Fonts/YuGothM.ttc", "C:/Windows/Fonts/YuGothL.ttc"),
+        "bold": ("C:/Windows/Fonts/YuGothB.ttc", "C:/Windows/Fonts/YuGothM.ttc"),
+    },
+    "biz_ud_gothic": {
+        "light": ("C:/Windows/Fonts/BIZ-UDGothicR.ttc",),
+        "regular": ("C:/Windows/Fonts/BIZ-UDGothicR.ttc",),
+        "bold": ("C:/Windows/Fonts/BIZ-UDGothicB.ttc", "C:/Windows/Fonts/BIZ-UDGothicR.ttc"),
+    },
+    "meiryo": {
+        "light": ("C:/Windows/Fonts/meiryo.ttc",),
+        "regular": ("C:/Windows/Fonts/meiryo.ttc",),
+        "bold": ("C:/Windows/Fonts/meiryob.ttc", "C:/Windows/Fonts/meiryo.ttc"),
+    },
+    "noto_sans_jp": {
+        "light": (
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "NotoSansCJK-Regular.ttc",
+        ),
+        "regular": (
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "NotoSansCJK-Regular.ttc",
+        ),
+        "bold": (
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+            "NotoSansCJK-Bold.ttc",
+        ),
+    },
+    "hiragino": {
+        "light": (
+            "/System/Library/Fonts/ヒラギノ角ゴシック W2.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        ),
+        "regular": (
+            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        ),
+        "bold": (
+            "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        ),
+    },
+    "deja_vu": {
+        "light": ("DejaVuSans.ttf",),
+        "regular": ("DejaVuSans.ttf",),
+        "bold": ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"),
+    },
 }
 
 
-@lru_cache(maxsize=96)
-def _load_font(size: int, weight: str = "regular") -> ImageFont.ImageFont:
+@lru_cache(maxsize=256)
+def _load_font(
+    size: int,
+    weight: str = "regular",
+    font_family: str = _DEFAULT_FONT_FAMILY,
+    custom_font_path: str = "",
+) -> ImageFont.ImageFont:
     clamped_size = max(10, int(size))
-    candidate_paths = _FONT_CANDIDATES.get(weight, _FONT_CANDIDATES["regular"])
-    for font_path in candidate_paths:
+    for font_path in _font_candidate_paths(font_family, weight, custom_font_path):
         try:
             return ImageFont.truetype(font_path, clamped_size)
         except OSError:
             continue
     return ImageFont.load_default()
+
+
+def _font_candidate_paths(font_family: str, weight: str, custom_font_path: str) -> tuple[str, ...]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_many(paths: tuple[str, ...]) -> None:
+        for raw_path in paths:
+            path = raw_path.strip()
+            if path and path not in seen:
+                candidates.append(path)
+                seen.add(path)
+
+    if custom_font_path.strip():
+        try:
+            add_many((str(Path(custom_font_path.strip()).expanduser()),))
+        except OSError:
+            add_many((custom_font_path.strip(),))
+
+    family = _FONT_CANDIDATES.get(font_family, _FONT_CANDIDATES[_DEFAULT_FONT_FAMILY])
+    add_many(family.get(weight, family.get("regular", ())))
+    if weight != "regular":
+        add_many(family.get("regular", ()))
+
+    if font_family != _DEFAULT_FONT_FAMILY:
+        fallback_family = _FONT_CANDIDATES[_DEFAULT_FONT_FAMILY]
+        add_many(fallback_family.get(weight, fallback_family["regular"]))
+        if weight != "regular":
+            add_many(fallback_family["regular"])
+
+    add_many(("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"))
+    return tuple(candidates)
 
 
 @dataclass(slots=True)
@@ -191,6 +282,14 @@ class ProjectRenderer:
     def set_settings(self, settings: RenderSettings) -> None:
         self.settings = settings
         self._measure_render_cache.clear()
+
+    def _font(self, size: int, weight: str = "regular") -> ImageFont.ImageFont:
+        return _load_font(
+            size,
+            weight,
+            getattr(self.settings, "font_family", _DEFAULT_FONT_FAMILY),
+            getattr(self.settings, "custom_font_path", ""),
+        )
 
     def get_measure_for_time(self, time_sec: float) -> Measure:
         if time_sec <= 0:
@@ -570,7 +669,7 @@ class ProjectRenderer:
             minimum_label_size,
             min(int(plot_height * 0.025), int(max_label_size * overlay_scale), int(measure_width * 0.18)),
         )
-        label_font = _load_font(label_size, "light")
+        label_font = self._font(label_size, "light")
         label_y = top_padding - getattr(label_font, "size", label_size) - max(6, int(8 * overlay_scale))
         for slot_index, measure in enumerate(visible_measures):
             measure_x0 = left_padding + slot_index * measure_width
@@ -691,14 +790,14 @@ class ProjectRenderer:
         block_gap = (54 if overlay_layout == "wide" else 34 if overlay_layout == "compact" else 24) * overlay_scale
         divider_gap = (22 if overlay_layout == "wide" else 16 if overlay_layout == "compact" else 12) * overlay_scale
         line_height = 16 * overlay_scale
-        label_font = _load_font(int(15 * overlay_scale), "light")
-        value_font = _load_font(int((34 if overlay_layout == "wide" else 30 if overlay_layout == "compact" else 27) * overlay_scale), "light")
-        stat_label_font = _load_font(int(14 * overlay_scale), "light")
-        stat_value_font = _load_font(int((20 if overlay_layout == "wide" else 18 if overlay_layout == "compact" else 17) * overlay_scale), "light")
-        chord_label_font = _load_font(int((16 if overlay_layout == "wide" else 15 if overlay_layout == "compact" else 14) * overlay_scale), "light")
-        chord_font = _load_font(int((56 if overlay_layout == "wide" else 48 if overlay_layout == "compact" else 38) * overlay_scale), "light")
-        chord_notes_font = _load_font(int((21 if overlay_layout == "wide" else 19 if overlay_layout == "compact" else 17) * overlay_scale), "light")
-        footer_font = _load_font(int(14 * overlay_scale), "light")
+        label_font = self._font(int(15 * overlay_scale), "light")
+        value_font = self._font(int((34 if overlay_layout == "wide" else 30 if overlay_layout == "compact" else 27) * overlay_scale), "light")
+        stat_label_font = self._font(int(14 * overlay_scale), "light")
+        stat_value_font = self._font(int((20 if overlay_layout == "wide" else 18 if overlay_layout == "compact" else 17) * overlay_scale), "light")
+        chord_label_font = self._font(int((16 if overlay_layout == "wide" else 15 if overlay_layout == "compact" else 14) * overlay_scale), "light")
+        chord_font = self._font(int((56 if overlay_layout == "wide" else 48 if overlay_layout == "compact" else 38) * overlay_scale), "light")
+        chord_notes_font = self._font(int((21 if overlay_layout == "wide" else 19 if overlay_layout == "compact" else 17) * overlay_scale), "light")
+        footer_font = self._font(int(14 * overlay_scale), "light")
         label_y = top_y
         value_y = top_y + 18 * overlay_scale
         top_cursor_y = top_y
@@ -942,6 +1041,8 @@ class ProjectRenderer:
             settings.horizontal_padding_ratio,
             settings.vertical_padding_ratio,
             settings.idle_outline_width,
+            getattr(settings, "font_family", _DEFAULT_FONT_FAMILY),
+            getattr(settings, "custom_font_path", ""),
         )
 
     def _background_fill(self) -> tuple[int, int, int, int]:

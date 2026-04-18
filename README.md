@@ -172,6 +172,13 @@ dist\MidiMeasureVideoExporter\MidiMeasureVideoExporter.exe
 配布時は `_internal` を含む `dist\MidiMeasureVideoExporter` フォルダごと一緒にしてください。
 `build_exe.bat` は古い `dist_...` / `build_...` フォルダを整理してから、常にこの場所へ作り直します。
 
+## フォント設定
+
+- `基本` タブの `文字フォント` から、モダン細字、游ゴシック、BIZ UDゴシック、メイリオ、Noto Sans JP、ヒラギノ角ゴ、DejaVu Sans を選べます。
+- `フォントファイルを選択` から `.ttf / .ttc / .otf` を選ぶと、そのフォントがプレビューと書き出しの両方に優先して使われます。
+- カスタムフォントも見た目プリセットに保存されるため、同じ設定をあとから呼び出せます。
+- ブラウザ版では内蔵フォント選択に加えて、PC側に存在するフォントファイルのパスを入力できます。
+
 ## 補足
 
 - 複数トラックの MIDI はまとめて表示します

@@ -32,6 +32,7 @@ from .models import (
     CORNER_STYLE_CHOICES,
     CUSTOM_THEME_NAME,
     DEFAULT_THEME_NAME,
+    FONT_FAMILY_CHOICES,
     GLOW_STYLE_CHOICES,
     RELEASE_FADE_CURVE_CHOICES,
     RELEASE_FADE_STYLE_CHOICES,
@@ -103,6 +104,7 @@ def index():
         "choices": {
             "themes": theme_name_choices(),
             "viewModes": _choices_to_payload(VIEW_MODE_CHOICES),
+            "fonts": _choices_to_payload(FONT_FAMILY_CHOICES),
             "corners": _choices_to_payload(CORNER_STYLE_CHOICES),
             "glows": _choices_to_payload(GLOW_STYLE_CHOICES),
             "animations": _choices_to_payload(ANIMATION_STYLE_CHOICES),

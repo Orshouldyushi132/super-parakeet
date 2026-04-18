@@ -301,7 +301,8 @@ def _export_video_file_chunked(
     if progress_callback:
         progress_callback(0.0, f"{progress_label}を書き出しています...")
 
-    with tempfile.TemporaryDirectory(prefix="midi_video_export_", ignore_cleanup_errors=True) as temp_dir:
+    temp_context, temp_parent = _make_export_temp_directory(destination)
+    with temp_context as temp_dir:
         temp_output = Path(temp_dir) / temp_file_name
         _write_video_frames_with_ffmpeg(
             project=project,
@@ -346,9 +347,68 @@ def _export_video_file_chunked(
             destination.unlink()
         shutil.move(str(final_temp_output), str(destination))
 
+    if temp_parent is not None:
+        _remove_empty_directory(temp_parent)
+
     if progress_callback:
         progress_callback(1.0, f"書き出しが完了しました: {destination.name}")
     return destination
+
+
+def _make_export_temp_directory(destination: Path) -> tuple[tempfile.TemporaryDirectory[str], Path | None]:
+    for parent in _export_temp_parent_candidates(destination):
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            probe_path = parent / ".write_test"
+            probe_path.write_bytes(b"")
+            probe_path.unlink(missing_ok=True)
+        except OSError:
+            continue
+        return (
+            tempfile.TemporaryDirectory(
+                prefix="midi_video_export_",
+                dir=parent,
+                ignore_cleanup_errors=True,
+            ),
+            parent,
+        )
+    return tempfile.TemporaryDirectory(prefix="midi_video_export_", ignore_cleanup_errors=True), None
+
+
+def _export_temp_parent_candidates(destination: Path) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    if destination.anchor:
+        candidates.append(Path(destination.anchor) / "midi_video_exporter_temp")
+
+    destination_parent = destination.parent
+    if _is_ascii_path(destination_parent):
+        candidates.append(destination_parent / ".midi_video_exporter_temp")
+
+    candidates.append(Path(tempfile.gettempdir()) / "midi_video_exporter_work")
+
+    unique_candidates: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate).casefold()
+        if key not in seen:
+            unique_candidates.append(candidate)
+            seen.add(key)
+    return tuple(unique_candidates)
+
+
+def _is_ascii_path(path: Path) -> bool:
+    try:
+        str(path).encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _remove_empty_directory(path: Path) -> None:
+    try:
+        path.rmdir()
+    except OSError:
+        pass
 
 
 def _writer_output_params(writer_kwargs: dict[str, object] | None) -> list[str]:
@@ -458,10 +518,27 @@ def _write_frame_to_stdin(process: subprocess.Popen[bytes], frame_array: np.ndar
 def _raise_ffmpeg_video_error(command: list[str], stderr: bytes, return_code: int) -> None:
     stderr_text = stderr.decode("utf-8", errors="replace").strip()
     command_text = " ".join(command)
+    if _ffmpeg_error_is_no_space(stderr_text, return_code):
+        raise RuntimeError(
+            "ディスクの空き容量が足りないため、FFmpegで動画を書き出せませんでした。\n\n"
+            "MOVの透過・4K・120FPSは一時ファイルもかなり大きくなります。"
+            "保存先ドライブの空き容量を増やすか、WebM VP9 / H.264、低めの解像度、低めのFPSで試してください。\n\n"
+            f"FFMPEG COMMAND:\n{command_text}\n\n"
+            f"FFMPEG STDERR OUTPUT:\n{stderr_text or return_code}"
+        )
     raise RuntimeError(
         "FFmpeg で動画の書き出しに失敗しました。\n\n"
         f"FFMPEG COMMAND:\n{command_text}\n\n"
         f"FFMPEG STDERR OUTPUT:\n{stderr_text or return_code}"
+    )
+
+
+def _ffmpeg_error_is_no_space(stderr_text: str, return_code: int) -> bool:
+    normalized = stderr_text.lower()
+    return (
+        "no space left on device" in normalized
+        or "not enough space" in normalized
+        or return_code in {-28, 28}
     )
 
 
