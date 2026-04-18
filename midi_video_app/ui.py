@@ -179,6 +179,7 @@ class MidiVideoApp:
         self.show_measure_overlay_var = tk.BooleanVar(value=self.render_settings.show_measure_overlay)
         self.show_stats_overlay_var = tk.BooleanVar(value=self.render_settings.show_stats_overlay)
         self.show_chord_overlay_var = tk.BooleanVar(value=self.render_settings.show_chord_overlay)
+        self.bold_chord_text_var = tk.BooleanVar(value=self.render_settings.bold_chord_text)
         self.show_playhead_var = tk.BooleanVar(value=self.render_settings.show_playhead)
         self.glow_strength_var = tk.DoubleVar(value=self.render_settings.glow_strength * 100.0)
         self.animation_strength_var = tk.DoubleVar(value=self.render_settings.animation_strength * 100.0)
@@ -524,12 +525,13 @@ class MidiVideoApp:
         ttk.Checkbutton(overlay_frame, text="小節ガイド", variable=self.show_measure_overlay_var, command=self._on_toggle_changed).grid(row=1, column=1, sticky="w", pady=(6, 0))
         ttk.Checkbutton(overlay_frame, text="統計表示", variable=self.show_stats_overlay_var, command=self._on_toggle_changed).grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(overlay_frame, text="コード表示", variable=self.show_chord_overlay_var, command=self._on_toggle_changed).grid(row=2, column=1, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(overlay_frame, text="コード名を太字", variable=self.bold_chord_text_var, command=self._on_toggle_changed).grid(row=3, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(
             overlay_frame,
             text="表示中の音域だけに自動フィット",
             variable=self.fit_to_visible_note_range_var,
             command=self._on_toggle_changed,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         row += 1
         ttk.Separator(panel).grid(row=row, column=0, columnspan=4, sticky="ew", pady=12)
@@ -1471,6 +1473,7 @@ class MidiVideoApp:
         self.render_settings.show_measure_overlay = bool(self.show_measure_overlay_var.get())
         self.render_settings.show_stats_overlay = bool(self.show_stats_overlay_var.get())
         self.render_settings.show_chord_overlay = bool(self.show_chord_overlay_var.get())
+        self.render_settings.bold_chord_text = bool(self.bold_chord_text_var.get())
         self.render_settings.show_playhead = bool(self.show_playhead_var.get())
         if self.renderer:
             self.renderer.set_settings(self.render_settings)
@@ -1536,6 +1539,7 @@ class MidiVideoApp:
         self.show_measure_overlay_var.set(self.render_settings.show_measure_overlay)
         self.show_stats_overlay_var.set(self.render_settings.show_stats_overlay)
         self.show_chord_overlay_var.set(self.render_settings.show_chord_overlay)
+        self.bold_chord_text_var.set(self.render_settings.bold_chord_text)
         self.show_playhead_var.set(self.render_settings.show_playhead)
         self.glow_strength_var.set(self.render_settings.glow_strength * 100.0)
         self.animation_strength_var.set(self.render_settings.animation_strength * 100.0)

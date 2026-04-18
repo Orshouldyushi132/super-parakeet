@@ -89,6 +89,7 @@ class RenderSettings:
     show_measure_overlay: bool = True
     show_stats_overlay: bool = True
     show_chord_overlay: bool = True
+    bold_chord_text: bool = False
     show_playhead: bool = True
 
 
@@ -439,6 +440,7 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "show_measure_overlay",
         "show_stats_overlay",
         "show_chord_overlay",
+        "bold_chord_text",
         "show_playhead",
     }
     string_fields = {

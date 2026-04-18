@@ -795,7 +795,8 @@ class ProjectRenderer:
         stat_label_font = self._font(int(14 * overlay_scale), "light")
         stat_value_font = self._font(int((20 if overlay_layout == "wide" else 18 if overlay_layout == "compact" else 17) * overlay_scale), "light")
         chord_label_font = self._font(int((16 if overlay_layout == "wide" else 15 if overlay_layout == "compact" else 14) * overlay_scale), "light")
-        chord_font = self._font(int((56 if overlay_layout == "wide" else 48 if overlay_layout == "compact" else 38) * overlay_scale), "light")
+        chord_weight = "bold" if getattr(self.settings, "bold_chord_text", False) else "light"
+        chord_font = self._font(int((56 if overlay_layout == "wide" else 48 if overlay_layout == "compact" else 38) * overlay_scale), chord_weight)
         chord_notes_font = self._font(int((21 if overlay_layout == "wide" else 19 if overlay_layout == "compact" else 17) * overlay_scale), "light")
         footer_font = self._font(int(14 * overlay_scale), "light")
         label_y = top_y
@@ -933,6 +934,7 @@ class ProjectRenderer:
                 chord_font,
                 self._overlay_color(244),
                 shadow_alpha=118,
+                embolden=max(1, int(round(overlay_scale))) if getattr(self.settings, "bold_chord_text", False) else 0,
             )
             self._draw_overlay_text(
                 draw,
@@ -1146,6 +1148,7 @@ class ProjectRenderer:
         font: ImageFont.ImageFont,
         fill: tuple[int, int, int, int],
         shadow_alpha: int = 96,
+        embolden: int = 0,
     ) -> None:
         shadow_offset = max(1, int(round(getattr(font, "size", 16) * 0.06)))
         if shadow_alpha > 0:
@@ -1156,6 +1159,20 @@ class ProjectRenderer:
                 fill=shadow_fill,
                 font=font,
             )
+        if embolden > 0:
+            for offset_x in range(1, embolden + 1):
+                draw.draw.text(
+                    (position[0] + offset_x, position[1]),
+                    text,
+                    fill=fill,
+                    font=font,
+                )
+                draw.draw.text(
+                    (position[0] - offset_x, position[1]),
+                    text,
+                    fill=fill,
+                    font=font,
+                )
         draw.draw.text(
             position,
             text,
