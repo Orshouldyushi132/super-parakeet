@@ -58,6 +58,7 @@ const elements = {
   afterimageStyleSelect: document.getElementById("afterimageStyleSelect"),
   releaseFadeStyleSelect: document.getElementById("releaseFadeStyleSelect"),
   releaseFadeCurveSelect: document.getElementById("releaseFadeCurveSelect"),
+  safeAreaEnabledCheckbox: document.getElementById("safeAreaEnabledCheckbox"),
   hideFutureNotesCheckbox: document.getElementById("hideFutureNotesCheckbox"),
   showPlayheadCheckbox: document.getElementById("showPlayheadCheckbox"),
   showTimeOverlayCheckbox: document.getElementById("showTimeOverlayCheckbox"),
@@ -75,6 +76,7 @@ const elements = {
   outlineColorInput: document.getElementById("outlineColorInput"),
   textColorInput: document.getElementById("textColorInput"),
   visibleMeasureCountInput: document.getElementById("visibleMeasureCountInput"),
+  safeAreaScaleInput: document.getElementById("safeAreaScaleInput"),
   noteLengthScaleInput: document.getElementById("noteLengthScaleInput"),
   noteHeightScaleInput: document.getElementById("noteHeightScaleInput"),
   horizontalPaddingInput: document.getElementById("horizontalPaddingInput"),
@@ -90,6 +92,7 @@ const elements = {
   afterimagePaddingInput: document.getElementById("afterimagePaddingInput"),
   releaseFadeDurationInput: document.getElementById("releaseFadeDurationInput"),
   visibleMeasureCountValue: document.getElementById("visibleMeasureCountValue"),
+  safeAreaScaleValue: document.getElementById("safeAreaScaleValue"),
   noteLengthScaleValue: document.getElementById("noteLengthScaleValue"),
   noteHeightScaleValue: document.getElementById("noteHeightScaleValue"),
   horizontalPaddingValue: document.getElementById("horizontalPaddingValue"),
@@ -125,6 +128,8 @@ const settingBindings = {
   release_fade_style: elements.releaseFadeStyleSelect,
   release_fade_curve: elements.releaseFadeCurveSelect,
   visible_measure_count: elements.visibleMeasureCountInput,
+  safe_area_enabled: elements.safeAreaEnabledCheckbox,
+  safe_area_scale: elements.safeAreaScaleInput,
   hide_future_notes: elements.hideFutureNotesCheckbox,
   show_time_overlay: elements.showTimeOverlayCheckbox,
   show_measure_overlay: elements.showMeasureOverlayCheckbox,
@@ -165,12 +170,14 @@ const scaledSettingFields = new Set([
   "afterimage_duration_sec",
   "afterimage_padding_scale",
   "release_fade_duration_sec",
+  "safe_area_scale",
 ]);
 
 const integerSettingFields = new Set(["visible_measure_count"]);
 
 const booleanSettingFields = new Set([
   "hide_future_notes",
+  "safe_area_enabled",
   "show_time_overlay",
   "show_measure_overlay",
   "show_stats_overlay",
@@ -327,6 +334,7 @@ function syncThemeAtmosphere(settings) {
 
 function syncSliderLabels() {
   elements.visibleMeasureCountValue.textContent = `${elements.visibleMeasureCountInput.value}小節`;
+  elements.safeAreaScaleValue.textContent = `${elements.safeAreaScaleInput.value}%`;
   elements.noteLengthScaleValue.textContent = `${elements.noteLengthScaleInput.value}%`;
   elements.noteHeightScaleValue.textContent = `${elements.noteHeightScaleInput.value}%`;
   elements.horizontalPaddingValue.textContent = `${elements.horizontalPaddingInput.value}%`;
@@ -938,6 +946,7 @@ function initialize() {
 
   [
     elements.visibleMeasureCountInput,
+    elements.safeAreaScaleInput,
     elements.noteLengthScaleInput,
     elements.noteHeightScaleInput,
     elements.horizontalPaddingInput,
@@ -961,6 +970,7 @@ function initialize() {
 
   [
     elements.hideFutureNotesCheckbox,
+    elements.safeAreaEnabledCheckbox,
     elements.showPlayheadCheckbox,
     elements.showTimeOverlayCheckbox,
     elements.showMeasureOverlayCheckbox,

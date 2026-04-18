@@ -83,6 +83,8 @@ class RenderSettings:
     attack_fade_duration_sec: float = 0.12
     visible_measure_count: int = 4
     lyrics_space_scale: float = 1.0
+    safe_area_enabled: bool = True
+    safe_area_scale: float = 1.0
     fit_to_visible_note_range: bool = False
     hide_future_notes: bool = True
     show_time_overlay: bool = True
@@ -428,12 +430,14 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "release_fade_duration_sec": (0.0, 2.0),
         "attack_fade_duration_sec": (0.0, 2.0),
         "lyrics_space_scale": (0.0, 3.0),
+        "safe_area_scale": (0.0, 2.0),
     }
     int_ranges = {
         "visible_measure_count": (1, 8),
     }
     bool_fields = {
         "transparent_background",
+        "safe_area_enabled",
         "fit_to_visible_note_range",
         "hide_future_notes",
         "show_time_overlay",

@@ -211,6 +211,14 @@ class _PreparedSegment:
     rect: tuple[float, float, float, float]
 
 
+@dataclass(slots=True)
+class _SafeAreaInsets:
+    left: float = 0.0
+    top: float = 0.0
+    right: float = 0.0
+    bottom: float = 0.0
+
+
 class _LayerContext:
     def __init__(self, image: Image.Image) -> None:
         self.image = image
@@ -407,15 +415,17 @@ class ProjectRenderer:
         current_measure = self.get_measure_for_time(clamped_time)
         overlay_layout = self._overlay_layout_mode(width, height)
         overlay_scale = self._overlay_scale(width, height)
+        safe_insets = self._safe_area_insets(width, height, overlay_layout)
+        overlay_scale = self._safe_overlay_scale(overlay_scale, overlay_layout, safe_insets)
 
         horizontal_padding = width * max(0.025, self.settings.horizontal_padding_ratio * 0.55)
         vertical_padding = height * max(0.04, self.settings.vertical_padding_ratio * 0.5)
         top_overlay_height, bottom_overlay_height = self._performance_overlay_heights(overlay_layout, overlay_scale)
         lyric_gap_height = self._lyrics_reserve_height(overlay_layout, overlay_scale)
-        left_padding = horizontal_padding
-        right_padding = horizontal_padding
-        top_padding = vertical_padding + top_overlay_height
-        bottom_padding = vertical_padding + bottom_overlay_height + lyric_gap_height
+        left_padding = max(horizontal_padding, safe_insets.left)
+        right_padding = max(horizontal_padding, safe_insets.right)
+        top_padding = max(vertical_padding, safe_insets.top) + top_overlay_height
+        bottom_padding = max(vertical_padding, safe_insets.bottom) + bottom_overlay_height + lyric_gap_height
         plot_width = max(1.0, width - left_padding - right_padding)
         plot_height = max(1.0, height - top_padding - bottom_padding)
         measure_width = plot_width / max(1, visible_measure_count)
@@ -568,12 +578,15 @@ class ProjectRenderer:
             current_measure,
             visible_measures,
             left_padding,
+            right_padding,
             vertical_padding,
             width,
             height,
             top_overlay_height,
             bottom_overlay_height,
             overlay_layout,
+            overlay_scale,
+            safe_insets,
         )
 
         return image if self.settings.transparent_background else image.convert("RGB")
@@ -773,20 +786,22 @@ class ProjectRenderer:
         current_measure: Measure,
         visible_measures: list[Measure],
         left_padding: float,
+        right_padding: float,
         vertical_padding: float,
         width: int,
         height: int,
         top_overlay_height: float,
         bottom_overlay_height: float,
         overlay_layout: str,
+        overlay_scale: float,
+        safe_insets: _SafeAreaInsets,
     ) -> None:
         beat_index, beat_fraction = self._beat_display_state(current_measure, time_sec)
         beat_millis = int(_clamp(beat_fraction, 0.0, 0.999) * 1000)
         top_left_x = left_padding
-        overlay_scale = self._overlay_scale(width, height)
-        usable_width = max(1.0, width - left_padding * 2.0)
+        usable_width = max(1.0, width - left_padding - right_padding)
         stacked_top = overlay_layout != "wide"
-        top_y = vertical_padding + 10 * overlay_scale
+        top_y = max(vertical_padding + 10 * overlay_scale, safe_insets.top)
         block_gap = (54 if overlay_layout == "wide" else 34 if overlay_layout == "compact" else 24) * overlay_scale
         divider_gap = (22 if overlay_layout == "wide" else 16 if overlay_layout == "compact" else 12) * overlay_scale
         line_height = 16 * overlay_scale
@@ -861,8 +876,8 @@ class ProjectRenderer:
                     label_x = top_left_x
                     value_x = top_left_x
                 else:
-                    value_x = width - left_padding - (value_bbox[2] - value_bbox[0])
-                    label_x = width - left_padding - (label_bbox[2] - label_bbox[0])
+                    value_x = width - right_padding - (value_bbox[2] - value_bbox[0])
+                    label_x = width - right_padding - (label_bbox[2] - label_bbox[0])
                 self._draw_overlay_text(
                     draw,
                     (label_x, line_y),
@@ -884,9 +899,10 @@ class ProjectRenderer:
 
         if self.settings.show_measure_overlay and visible_measures:
             footer_text = f"表示小節 {len(visible_measures)}"
-            footer_y = height - bottom_overlay_height + 28 * overlay_scale
+            bottom_safe_margin = max(vertical_padding, safe_insets.bottom)
+            footer_y = height - bottom_safe_margin - bottom_overlay_height + 28 * overlay_scale
             if overlay_layout == "portrait" and self.settings.show_chord_overlay:
-                footer_y = height - bottom_overlay_height + 108 * overlay_scale
+                footer_y = height - bottom_safe_margin - bottom_overlay_height + 108 * overlay_scale
             self._draw_overlay_text(
                 draw,
                 (left_padding, footer_y),
@@ -910,10 +926,10 @@ class ProjectRenderer:
                 notes_bbox[2] - notes_bbox[0],
             )
             chord_block_width = min(chord_block_width, usable_width)
-            chord_x = width - left_padding - chord_block_width
+            chord_x = width - right_padding - chord_block_width
             if overlay_layout == "portrait":
                 chord_x = top_left_x
-            chord_y = height - bottom_overlay_height + 10 * overlay_scale
+            chord_y = height - max(vertical_padding, safe_insets.bottom) - bottom_overlay_height + 10 * overlay_scale
             draw.line(
                 (chord_x, chord_y - 10 * overlay_scale, chord_x + min(chord_block_width, 108 * overlay_scale), chord_y - 10 * overlay_scale),
                 fill=_with_alpha(self.settings.animation_accent_color, 136),
@@ -1077,6 +1093,24 @@ class ProjectRenderer:
     @staticmethod
     def _relative_overlay_scale(overlay_scale: float) -> float:
         return max(1.0, overlay_scale / MIN_OVERLAY_SCALE)
+
+    def _safe_area_insets(self, width: float, height: float, overlay_layout: str) -> _SafeAreaInsets:
+        if overlay_layout != "portrait" or not getattr(self.settings, "safe_area_enabled", True):
+            return _SafeAreaInsets()
+
+        scale = _clamp(float(getattr(self.settings, "safe_area_scale", 1.0)), 0.0, 2.0)
+        return _SafeAreaInsets(
+            left=width * 0.055 * scale,
+            top=height * 0.085 * scale,
+            right=width * 0.16 * scale,
+            bottom=height * 0.18 * scale,
+        )
+
+    @staticmethod
+    def _safe_overlay_scale(overlay_scale: float, overlay_layout: str, safe_insets: _SafeAreaInsets) -> float:
+        if overlay_layout != "portrait" or safe_insets.bottom <= 0:
+            return overlay_scale
+        return max(MIN_OVERLAY_SCALE, overlay_scale * 0.88)
 
     @staticmethod
     def _overlay_layout_mode(width: float, height: float) -> str:

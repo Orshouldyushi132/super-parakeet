@@ -165,8 +165,16 @@
                   <strong id="visibleMeasureCountValue">4小節</strong>
                 </div>
               </label>
+              <label class="field wide">
+                <span>セーフエリア余白</span>
+                <div class="slider-inline">
+                  <input id="safeAreaScaleInput" type="range" min="0" max="200" step="1">
+                  <strong id="safeAreaScaleValue">100%</strong>
+                </div>
+              </label>
             </div>
             <div class="toggle-grid">
+              <label class="toggle-card"><input id="safeAreaEnabledCheckbox" type="checkbox"><span>縦動画セーフエリアを使う</span></label>
               <label class="toggle-card"><input id="hideFutureNotesCheckbox" type="checkbox"><span>未再生ノーツを隠す</span></label>
               <label class="toggle-card"><input id="showPlayheadCheckbox" type="checkbox"><span>再生バー</span></label>
               <label class="toggle-card"><input id="showTimeOverlayCheckbox" type="checkbox"><span>時間と拍表示</span></label>

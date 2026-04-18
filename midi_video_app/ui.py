@@ -172,6 +172,8 @@ class MidiVideoApp:
         )
         self.visible_measure_count_var = tk.DoubleVar(value=float(self.render_settings.visible_measure_count))
         self.lyrics_space_scale_var = tk.DoubleVar(value=self.render_settings.lyrics_space_scale * 100.0)
+        self.safe_area_enabled_var = tk.BooleanVar(value=self.render_settings.safe_area_enabled)
+        self.safe_area_scale_var = tk.DoubleVar(value=self.render_settings.safe_area_scale * 100.0)
         self.transparent_background_var = tk.BooleanVar(value=self.render_settings.transparent_background)
         self.fit_to_visible_note_range_var = tk.BooleanVar(value=self.render_settings.fit_to_visible_note_range)
         self.hide_future_notes_var = tk.BooleanVar(value=self.render_settings.hide_future_notes)
@@ -207,6 +209,7 @@ class MidiVideoApp:
         self.note_length_scale_text_var = tk.StringVar()
         self.note_height_scale_text_var = tk.StringVar()
         self.lyrics_space_scale_text_var = tk.StringVar()
+        self.safe_area_scale_text_var = tk.StringVar()
         self.horizontal_padding_text_var = tk.StringVar()
         self.vertical_padding_text_var = tk.StringVar()
         self.idle_outline_width_text_var = tk.StringVar()
@@ -511,6 +514,26 @@ class MidiVideoApp:
             self.lyrics_space_scale_text_var,
             0,
             300,
+            self._on_strength_changed,
+        )
+
+        row += 1
+        ttk.Checkbutton(
+            panel,
+            text="縦動画セーフエリアを使う",
+            variable=self.safe_area_enabled_var,
+            command=self._on_toggle_changed,
+        ).grid(row=row, column=0, columnspan=4, sticky="w", pady=(8, 0))
+
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "セーフエリア余白",
+            self.safe_area_scale_var,
+            self.safe_area_scale_text_var,
+            0,
+            200,
             self._on_strength_changed,
         )
 
@@ -1467,6 +1490,7 @@ class MidiVideoApp:
             return
 
         self.render_settings.transparent_background = bool(self.transparent_background_var.get())
+        self.render_settings.safe_area_enabled = bool(self.safe_area_enabled_var.get())
         self.render_settings.fit_to_visible_note_range = bool(self.fit_to_visible_note_range_var.get())
         self.render_settings.hide_future_notes = bool(self.hide_future_notes_var.get())
         self.render_settings.show_time_overlay = bool(self.show_time_overlay_var.get())
@@ -1488,6 +1512,7 @@ class MidiVideoApp:
 
         self.render_settings.visible_measure_count = max(1, min(8, int(round(self.visible_measure_count_var.get()))))
         self.render_settings.lyrics_space_scale = round(self.lyrics_space_scale_var.get() / 100.0, 3)
+        self.render_settings.safe_area_scale = round(self.safe_area_scale_var.get() / 100.0, 3)
         self.render_settings.glow_strength = round(self.glow_strength_var.get() / 100.0, 3)
         self.render_settings.animation_strength = round(self.animation_strength_var.get() / 100.0, 3)
         self.render_settings.animation_speed = round(self.animation_speed_var.get() / 100.0, 3)
@@ -1532,6 +1557,8 @@ class MidiVideoApp:
         self.attack_fade_curve_var.set(self._attack_curve_value_to_label[self.render_settings.attack_fade_curve])
         self.visible_measure_count_var.set(float(self.render_settings.visible_measure_count))
         self.lyrics_space_scale_var.set(self.render_settings.lyrics_space_scale * 100.0)
+        self.safe_area_enabled_var.set(self.render_settings.safe_area_enabled)
+        self.safe_area_scale_var.set(self.render_settings.safe_area_scale * 100.0)
         self.transparent_background_var.set(self.render_settings.transparent_background)
         self.fit_to_visible_note_range_var.set(self.render_settings.fit_to_visible_note_range)
         self.hide_future_notes_var.set(self.render_settings.hide_future_notes)
@@ -1579,6 +1606,7 @@ class MidiVideoApp:
         self.note_height_scale_text_var.set(f"{self.note_height_scale_var.get():.0f}%")
         self.visible_measure_count_text_var.set(f"{int(round(self.visible_measure_count_var.get()))}小節")
         self.lyrics_space_scale_text_var.set(f"{self.lyrics_space_scale_var.get():.0f}%")
+        self.safe_area_scale_text_var.set(f"{self.safe_area_scale_var.get():.0f}%")
         self.horizontal_padding_text_var.set(f"{self.horizontal_padding_var.get():.0f}%")
         self.vertical_padding_text_var.set(f"{self.vertical_padding_var.get():.0f}%")
         self.idle_outline_width_text_var.set(f"{self.idle_outline_width_var.get() / 100.0:.2f}x")
