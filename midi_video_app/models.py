@@ -56,6 +56,7 @@ class RenderSettings:
     animation_accent_color: str = "#7dd3fc"
     outline_color: str = "#ffffff"
     text_color: str = "#ffffff"
+    canvas_border_color: str = "#3f3f3f"
     font_family: str = "modern_light"
     custom_font_path: str = ""
     corner_style: str = "rounded"
@@ -85,6 +86,8 @@ class RenderSettings:
     lyrics_space_scale: float = 1.0
     safe_area_enabled: bool = True
     safe_area_scale: float = 1.0
+    canvas_border_enabled: bool = True
+    canvas_border_width: float = 1.0
     fit_to_visible_note_range: bool = False
     hide_future_notes: bool = True
     show_time_overlay: bool = True
@@ -431,6 +434,7 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "attack_fade_duration_sec": (0.0, 2.0),
         "lyrics_space_scale": (0.0, 3.0),
         "safe_area_scale": (0.0, 2.0),
+        "canvas_border_width": (0.0, 5.0),
     }
     int_ranges = {
         "visible_measure_count": (1, 8),
@@ -438,6 +442,7 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
     bool_fields = {
         "transparent_background",
         "safe_area_enabled",
+        "canvas_border_enabled",
         "fit_to_visible_note_range",
         "hide_future_notes",
         "show_time_overlay",

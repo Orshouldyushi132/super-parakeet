@@ -400,7 +400,7 @@ class ProjectRenderer:
             self._draw_active_segment(draw, item.base_rect, item.frame_rect, item.state)
 
         draw.flush()
-        return image if self.settings.transparent_background else image.convert("RGB")
+        return self._finalize_frame(image, width, height)
 
     def _render_performance_frame(self, clamped_time: float, width: int, height: int) -> Image.Image:
         overlay_layout = self._overlay_layout_mode(width, height)
@@ -591,7 +591,7 @@ class ProjectRenderer:
             safe_insets,
         )
 
-        return image if self.settings.transparent_background else image.convert("RGB")
+        return self._finalize_frame(image, width, height)
 
     def _performance_window(self, time_sec: float) -> tuple[int, int]:
         visible_measure_count = max(1, min(len(self.project.measures), int(self.settings.visible_measure_count)))
@@ -1070,6 +1070,45 @@ class ProjectRenderer:
             return 0, 0, 0, 0
         return _with_alpha(self.settings.background_color, 255)
 
+    def _finalize_frame(self, image: Image.Image, width: int, height: int) -> Image.Image:
+        self._draw_canvas_border(image, width, height)
+        return image if self.settings.transparent_background else image.convert("RGB")
+
+    def _draw_canvas_border(self, image: Image.Image, width: int, height: int) -> None:
+        if not getattr(self.settings, "canvas_border_enabled", True):
+            return
+
+        border_scale = max(0.0, float(getattr(self.settings, "canvas_border_width", 1.0)))
+        if border_scale <= 0.0:
+            return
+
+        border_width = max(1, int(round(min(width, height) * 0.0018 * border_scale)))
+        rect = (
+            0,
+            0,
+            max(0, width - 1),
+            max(0, height - 1),
+        )
+        draw = ImageDraw.Draw(image, "RGBA")
+        draw.rectangle(
+            rect,
+            outline=_with_alpha(getattr(self.settings, "canvas_border_color", "#3f3f3f"), 230),
+            width=border_width,
+        )
+
+        inner_offset = border_width + 1
+        if width > inner_offset * 2 + 2 and height > inner_offset * 2 + 2:
+            draw.rectangle(
+                (
+                    inner_offset,
+                    inner_offset,
+                    width - inner_offset - 1,
+                    height - inner_offset - 1,
+                ),
+                outline=_with_alpha(getattr(self.settings, "canvas_border_color", "#3f3f3f"), 72),
+                width=max(1, border_width // 2),
+            )
+
     @staticmethod
     def _overlay_scale(width: float, height: float) -> float:
         reference_width, reference_height = ProjectRenderer._preview_reference_size(width, height)
@@ -1134,14 +1173,17 @@ class ProjectRenderer:
         output = Image.new("RGBA", (width, height), self._background_fill())
         original_safe_area_enabled = self.settings.safe_area_enabled
         original_transparent_background = self.settings.transparent_background
+        original_canvas_border_enabled = self.settings.canvas_border_enabled
 
         try:
             self.settings.safe_area_enabled = False
             self.settings.transparent_background = True
+            self.settings.canvas_border_enabled = False
             content = self._render_performance_frame(clamped_time, width, height)
         finally:
             self.settings.safe_area_enabled = original_safe_area_enabled
             self.settings.transparent_background = original_transparent_background
+            self.settings.canvas_border_enabled = original_canvas_border_enabled
 
         scaled_width = max(1, int(round(width * safe_scale)))
         scaled_height = max(1, int(round(height * safe_scale)))
@@ -1154,7 +1196,7 @@ class ProjectRenderer:
         x = max(0, min(width - scaled_width, x))
         y = max(0, min(height - scaled_height, y))
         output.alpha_composite(content, (x, y))
-        return output if original_transparent_background else output.convert("RGB")
+        return self._finalize_frame(output, width, height)
 
     @staticmethod
     def _safe_overlay_scale(overlay_scale: float, overlay_layout: str, safe_insets: _SafeAreaInsets) -> float:

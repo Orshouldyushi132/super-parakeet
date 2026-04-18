@@ -172,9 +172,17 @@
                   <strong id="safeAreaScaleValue">100%</strong>
                 </div>
               </label>
+              <label class="field wide">
+                <span>動画範囲の枠幅</span>
+                <div class="slider-inline">
+                  <input id="canvasBorderWidthInput" type="range" min="0" max="500" step="1">
+                  <strong id="canvasBorderWidthValue">1.00x</strong>
+                </div>
+              </label>
             </div>
             <div class="toggle-grid">
               <label class="toggle-card"><input id="safeAreaEnabledCheckbox" type="checkbox"><span>縦動画セーフエリアを使う</span></label>
+              <label class="toggle-card"><input id="canvasBorderEnabledCheckbox" type="checkbox"><span>動画範囲の枠を表示</span></label>
               <label class="toggle-card"><input id="hideFutureNotesCheckbox" type="checkbox"><span>未再生ノーツを隠す</span></label>
               <label class="toggle-card"><input id="showPlayheadCheckbox" type="checkbox"><span>再生バー</span></label>
               <label class="toggle-card"><input id="showTimeOverlayCheckbox" type="checkbox"><span>時間と拍表示</span></label>
@@ -246,6 +254,10 @@
               <label class="field">
                 <span>文字色</span>
                 <input id="textColorInput" type="color">
+              </label>
+              <label class="field">
+                <span>動画範囲の枠色</span>
+                <input id="canvasBorderColorInput" type="color">
               </label>
             </div>
           </section>
