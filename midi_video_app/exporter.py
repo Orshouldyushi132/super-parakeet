@@ -40,9 +40,11 @@ class ExportResolutionPreset:
 
     def dimensions(self, orientation: str) -> tuple[int, int]:
         normalized_orientation = normalize_export_orientation(orientation)
+        long_side = max(self.width, self.height)
+        short_side = int(round(long_side * 9 / 16))
         if normalized_orientation == EXPORT_ORIENTATION_PORTRAIT:
-            return self.height, self.width
-        return self.width, self.height
+            return short_side, long_side
+        return long_side, short_side
 
 
 EXPORT_FORMAT_CHOICES: tuple[tuple[str, str], ...] = (

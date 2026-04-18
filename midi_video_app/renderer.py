@@ -403,6 +403,10 @@ class ProjectRenderer:
         return image if self.settings.transparent_background else image.convert("RGB")
 
     def _render_performance_frame(self, clamped_time: float, width: int, height: int) -> Image.Image:
+        overlay_layout = self._overlay_layout_mode(width, height)
+        if overlay_layout == "portrait" and self._safe_area_should_scale(width, height, overlay_layout):
+            return self._render_safe_scaled_performance_frame(clamped_time, width, height, overlay_layout)
+
         image = Image.new("RGBA", (width, height), self._background_fill())
         draw = _LayerContext(image)
         glow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -413,10 +417,8 @@ class ProjectRenderer:
         start_measure_index, visible_measure_count = self._performance_window(clamped_time)
         visible_measures = self.project.measures[start_measure_index : start_measure_index + visible_measure_count]
         current_measure = self.get_measure_for_time(clamped_time)
-        overlay_layout = self._overlay_layout_mode(width, height)
         overlay_scale = self._overlay_scale(width, height)
         safe_insets = self._safe_area_insets(width, height, overlay_layout)
-        overlay_scale = self._safe_overlay_scale(overlay_scale, overlay_layout, safe_insets)
 
         horizontal_padding = width * max(0.025, self.settings.horizontal_padding_ratio * 0.55)
         vertical_padding = height * max(0.04, self.settings.vertical_padding_ratio * 0.5)
@@ -1105,6 +1107,54 @@ class ProjectRenderer:
             right=width * 0.16 * scale,
             bottom=height * 0.18 * scale,
         )
+
+    def _safe_area_should_scale(self, width: float, height: float, overlay_layout: str) -> bool:
+        if overlay_layout != "portrait" or not getattr(self.settings, "safe_area_enabled", True):
+            return False
+
+        safe_insets = self._safe_area_insets(width, height, overlay_layout)
+        safe_width = width - safe_insets.left - safe_insets.right
+        safe_height = height - safe_insets.top - safe_insets.bottom
+        return safe_width > 1.0 and safe_height > 1.0 and (
+            safe_insets.left > 0.0 or safe_insets.top > 0.0 or safe_insets.right > 0.0 or safe_insets.bottom > 0.0
+        )
+
+    def _render_safe_scaled_performance_frame(
+        self,
+        clamped_time: float,
+        width: int,
+        height: int,
+        overlay_layout: str,
+    ) -> Image.Image:
+        safe_insets = self._safe_area_insets(width, height, overlay_layout)
+        safe_width = max(1.0, width - safe_insets.left - safe_insets.right)
+        safe_height = max(1.0, height - safe_insets.top - safe_insets.bottom)
+        safe_scale = min(1.0, safe_width / max(width, 1.0), safe_height / max(height, 1.0))
+
+        output = Image.new("RGBA", (width, height), self._background_fill())
+        original_safe_area_enabled = self.settings.safe_area_enabled
+        original_transparent_background = self.settings.transparent_background
+
+        try:
+            self.settings.safe_area_enabled = False
+            self.settings.transparent_background = True
+            content = self._render_performance_frame(clamped_time, width, height)
+        finally:
+            self.settings.safe_area_enabled = original_safe_area_enabled
+            self.settings.transparent_background = original_transparent_background
+
+        scaled_width = max(1, int(round(width * safe_scale)))
+        scaled_height = max(1, int(round(height * safe_scale)))
+        if (scaled_width, scaled_height) != (width, height):
+            resample_filter = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+            content = content.resize((scaled_width, scaled_height), resample_filter)
+
+        x = int(round(safe_insets.left + (safe_width - scaled_width) / 2.0))
+        y = int(round(safe_insets.top + (safe_height - scaled_height) / 2.0))
+        x = max(0, min(width - scaled_width, x))
+        y = max(0, min(height - scaled_height, y))
+        output.alpha_composite(content, (x, y))
+        return output if original_transparent_background else output.convert("RGB")
 
     @staticmethod
     def _safe_overlay_scale(overlay_scale: float, overlay_layout: str, safe_insets: _SafeAreaInsets) -> float:

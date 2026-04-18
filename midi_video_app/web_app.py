@@ -94,10 +94,10 @@ def index():
             {
                 "value": preset.value,
                 "label": preset.label,
-                "landscapeWidth": preset.width,
-                "landscapeHeight": preset.height,
-                "portraitWidth": preset.height,
-                "portraitHeight": preset.width,
+                "landscapeWidth": preset.dimensions("landscape")[0],
+                "landscapeHeight": preset.dimensions("landscape")[1],
+                "portraitWidth": preset.dimensions("portrait")[0],
+                "portraitHeight": preset.dimensions("portrait")[1],
             }
             for preset in EXPORT_RESOLUTION_PRESETS
         ],
