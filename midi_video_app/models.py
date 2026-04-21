@@ -88,6 +88,16 @@ class RenderSettings:
     safe_area_scale: float = 1.0
     canvas_border_enabled: bool = True
     canvas_border_width: float = 1.0
+    show_midi_notes: bool = True
+    mad_image_enabled: bool = False
+    mad_image_path: str = ""
+    mad_image_style: str = "pop"
+    mad_image_alternate_flip: bool = True
+    mad_image_size: float = 0.36
+    mad_image_duration_sec: float = 0.28
+    mad_image_opacity: float = 1.0
+    mad_image_position_x: float = 0.5
+    mad_image_position_y: float = 0.5
     fit_to_visible_note_range: bool = False
     hide_future_notes: bool = True
     show_time_overlay: bool = True
@@ -151,6 +161,17 @@ ANIMATION_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
     ("expand", "エクスパンド"),
     ("flicker", "フリッカー"),
     ("wave", "ウェーブ"),
+)
+
+MAD_IMAGE_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("cut", "音MADカット"),
+    ("pop", "ポップ拡大"),
+    ("zoom", "反復ズーム"),
+    ("slide", "横スライド"),
+    ("spin", "回転イン"),
+    ("shake", "画面揺れ"),
+    ("bounce", "バウンド"),
+    ("strobe", "ストロボ"),
 )
 
 AFTERIMAGE_STYLE_CHOICES: tuple[tuple[str, str], ...] = (
@@ -410,6 +431,7 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "corner_style": {value for value, _ in CORNER_STYLE_CHOICES},
         "glow_style": {value for value, _ in GLOW_STYLE_CHOICES},
         "animation_style": {value for value, _ in ANIMATION_STYLE_CHOICES},
+        "mad_image_style": {value for value, _ in MAD_IMAGE_STYLE_CHOICES},
         "afterimage_style": {value for value, _ in AFTERIMAGE_STYLE_CHOICES},
         "release_fade_style": {value for value, _ in RELEASE_FADE_STYLE_CHOICES},
         "release_fade_curve": {value for value, _ in RELEASE_FADE_CURVE_CHOICES},
@@ -435,6 +457,11 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "lyrics_space_scale": (0.0, 3.0),
         "safe_area_scale": (0.0, 2.0),
         "canvas_border_width": (0.0, 5.0),
+        "mad_image_size": (0.05, 2.0),
+        "mad_image_duration_sec": (0.03, 5.0),
+        "mad_image_opacity": (0.0, 1.0),
+        "mad_image_position_x": (0.0, 1.0),
+        "mad_image_position_y": (0.0, 1.0),
     }
     int_ranges = {
         "visible_measure_count": (1, 8),
@@ -443,6 +470,9 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "transparent_background",
         "safe_area_enabled",
         "canvas_border_enabled",
+        "show_midi_notes",
+        "mad_image_enabled",
+        "mad_image_alternate_flip",
         "fit_to_visible_note_range",
         "hide_future_notes",
         "show_time_overlay",
@@ -454,6 +484,7 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
     }
     string_fields = {
         "custom_font_path",
+        "mad_image_path",
     }
 
     for field_name in render_settings_to_dict(settings):

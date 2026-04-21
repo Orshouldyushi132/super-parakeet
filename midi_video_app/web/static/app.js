@@ -52,14 +52,19 @@ const elements = {
   viewModeSelect: document.getElementById("viewModeSelect"),
   fontFamilySelect: document.getElementById("fontFamilySelect"),
   customFontPathInput: document.getElementById("customFontPathInput"),
+  madImagePathInput: document.getElementById("madImagePathInput"),
   cornerStyleSelect: document.getElementById("cornerStyleSelect"),
   glowStyleSelect: document.getElementById("glowStyleSelect"),
   animationStyleSelect: document.getElementById("animationStyleSelect"),
+  madImageStyleSelect: document.getElementById("madImageStyleSelect"),
   afterimageStyleSelect: document.getElementById("afterimageStyleSelect"),
   releaseFadeStyleSelect: document.getElementById("releaseFadeStyleSelect"),
   releaseFadeCurveSelect: document.getElementById("releaseFadeCurveSelect"),
   safeAreaEnabledCheckbox: document.getElementById("safeAreaEnabledCheckbox"),
   canvasBorderEnabledCheckbox: document.getElementById("canvasBorderEnabledCheckbox"),
+  showMidiNotesCheckbox: document.getElementById("showMidiNotesCheckbox"),
+  madImageEnabledCheckbox: document.getElementById("madImageEnabledCheckbox"),
+  madImageAlternateFlipCheckbox: document.getElementById("madImageAlternateFlipCheckbox"),
   hideFutureNotesCheckbox: document.getElementById("hideFutureNotesCheckbox"),
   showPlayheadCheckbox: document.getElementById("showPlayheadCheckbox"),
   showTimeOverlayCheckbox: document.getElementById("showTimeOverlayCheckbox"),
@@ -80,6 +85,11 @@ const elements = {
   visibleMeasureCountInput: document.getElementById("visibleMeasureCountInput"),
   safeAreaScaleInput: document.getElementById("safeAreaScaleInput"),
   canvasBorderWidthInput: document.getElementById("canvasBorderWidthInput"),
+  madImageSizeInput: document.getElementById("madImageSizeInput"),
+  madImageDurationInput: document.getElementById("madImageDurationInput"),
+  madImageOpacityInput: document.getElementById("madImageOpacityInput"),
+  madImagePositionXInput: document.getElementById("madImagePositionXInput"),
+  madImagePositionYInput: document.getElementById("madImagePositionYInput"),
   noteLengthScaleInput: document.getElementById("noteLengthScaleInput"),
   noteHeightScaleInput: document.getElementById("noteHeightScaleInput"),
   horizontalPaddingInput: document.getElementById("horizontalPaddingInput"),
@@ -97,6 +107,11 @@ const elements = {
   visibleMeasureCountValue: document.getElementById("visibleMeasureCountValue"),
   safeAreaScaleValue: document.getElementById("safeAreaScaleValue"),
   canvasBorderWidthValue: document.getElementById("canvasBorderWidthValue"),
+  madImageSizeValue: document.getElementById("madImageSizeValue"),
+  madImageDurationValue: document.getElementById("madImageDurationValue"),
+  madImageOpacityValue: document.getElementById("madImageOpacityValue"),
+  madImagePositionXValue: document.getElementById("madImagePositionXValue"),
+  madImagePositionYValue: document.getElementById("madImagePositionYValue"),
   noteLengthScaleValue: document.getElementById("noteLengthScaleValue"),
   noteHeightScaleValue: document.getElementById("noteHeightScaleValue"),
   horizontalPaddingValue: document.getElementById("horizontalPaddingValue"),
@@ -126,9 +141,11 @@ const settingBindings = {
   view_mode: elements.viewModeSelect,
   font_family: elements.fontFamilySelect,
   custom_font_path: elements.customFontPathInput,
+  mad_image_path: elements.madImagePathInput,
   corner_style: elements.cornerStyleSelect,
   glow_style: elements.glowStyleSelect,
   animation_style: elements.animationStyleSelect,
+  mad_image_style: elements.madImageStyleSelect,
   afterimage_style: elements.afterimageStyleSelect,
   release_fade_style: elements.releaseFadeStyleSelect,
   release_fade_curve: elements.releaseFadeCurveSelect,
@@ -137,6 +154,14 @@ const settingBindings = {
   safe_area_scale: elements.safeAreaScaleInput,
   canvas_border_enabled: elements.canvasBorderEnabledCheckbox,
   canvas_border_width: elements.canvasBorderWidthInput,
+  show_midi_notes: elements.showMidiNotesCheckbox,
+  mad_image_enabled: elements.madImageEnabledCheckbox,
+  mad_image_alternate_flip: elements.madImageAlternateFlipCheckbox,
+  mad_image_size: elements.madImageSizeInput,
+  mad_image_duration_sec: elements.madImageDurationInput,
+  mad_image_opacity: elements.madImageOpacityInput,
+  mad_image_position_x: elements.madImagePositionXInput,
+  mad_image_position_y: elements.madImagePositionYInput,
   hide_future_notes: elements.hideFutureNotesCheckbox,
   show_time_overlay: elements.showTimeOverlayCheckbox,
   show_measure_overlay: elements.showMeasureOverlayCheckbox,
@@ -179,6 +204,11 @@ const scaledSettingFields = new Set([
   "release_fade_duration_sec",
   "safe_area_scale",
   "canvas_border_width",
+  "mad_image_size",
+  "mad_image_duration_sec",
+  "mad_image_opacity",
+  "mad_image_position_x",
+  "mad_image_position_y",
 ]);
 
 const integerSettingFields = new Set(["visible_measure_count"]);
@@ -187,6 +217,9 @@ const booleanSettingFields = new Set([
   "hide_future_notes",
   "safe_area_enabled",
   "canvas_border_enabled",
+  "show_midi_notes",
+  "mad_image_enabled",
+  "mad_image_alternate_flip",
   "show_time_overlay",
   "show_measure_overlay",
   "show_stats_overlay",
@@ -345,6 +378,11 @@ function syncSliderLabels() {
   elements.visibleMeasureCountValue.textContent = `${elements.visibleMeasureCountInput.value}小節`;
   elements.safeAreaScaleValue.textContent = `${elements.safeAreaScaleInput.value}%`;
   elements.canvasBorderWidthValue.textContent = `${(Number(elements.canvasBorderWidthInput.value) / 100).toFixed(2)}x`;
+  elements.madImageSizeValue.textContent = `${elements.madImageSizeInput.value}%`;
+  elements.madImageDurationValue.textContent = `${(Number(elements.madImageDurationInput.value) / 100).toFixed(2)}秒`;
+  elements.madImageOpacityValue.textContent = `${elements.madImageOpacityInput.value}%`;
+  elements.madImagePositionXValue.textContent = `${elements.madImagePositionXInput.value}%`;
+  elements.madImagePositionYValue.textContent = `${elements.madImagePositionYInput.value}%`;
   elements.noteLengthScaleValue.textContent = `${elements.noteLengthScaleInput.value}%`;
   elements.noteHeightScaleValue.textContent = `${elements.noteHeightScaleInput.value}%`;
   elements.horizontalPaddingValue.textContent = `${elements.horizontalPaddingInput.value}%`;
@@ -882,6 +920,7 @@ function initialize() {
   populateSelect(elements.cornerStyleSelect, boot.choices.corners || [], boot.defaultSettings.corner_style);
   populateSelect(elements.glowStyleSelect, boot.choices.glows || [], boot.defaultSettings.glow_style);
   populateSelect(elements.animationStyleSelect, boot.choices.animations || [], boot.defaultSettings.animation_style);
+  populateSelect(elements.madImageStyleSelect, boot.choices.madImageStyles || [], boot.defaultSettings.mad_image_style);
   populateSelect(elements.afterimageStyleSelect, boot.choices.afterimages || [], boot.defaultSettings.afterimage_style);
   populateSelect(elements.releaseFadeStyleSelect, boot.choices.releaseFadeStyles || [], boot.defaultSettings.release_fade_style);
   populateSelect(elements.releaseFadeCurveSelect, boot.choices.releaseFadeCurves || [], boot.defaultSettings.release_fade_curve);
@@ -937,9 +976,11 @@ function initialize() {
     elements.viewModeSelect,
     elements.fontFamilySelect,
     elements.customFontPathInput,
+    elements.madImagePathInput,
     elements.cornerStyleSelect,
     elements.glowStyleSelect,
     elements.animationStyleSelect,
+    elements.madImageStyleSelect,
     elements.afterimageStyleSelect,
     elements.releaseFadeStyleSelect,
     elements.releaseFadeCurveSelect,
@@ -959,6 +1000,11 @@ function initialize() {
     elements.visibleMeasureCountInput,
     elements.safeAreaScaleInput,
     elements.canvasBorderWidthInput,
+    elements.madImageSizeInput,
+    elements.madImageDurationInput,
+    elements.madImageOpacityInput,
+    elements.madImagePositionXInput,
+    elements.madImagePositionYInput,
     elements.noteLengthScaleInput,
     elements.noteHeightScaleInput,
     elements.horizontalPaddingInput,
@@ -984,6 +1030,9 @@ function initialize() {
     elements.hideFutureNotesCheckbox,
     elements.safeAreaEnabledCheckbox,
     elements.canvasBorderEnabledCheckbox,
+    elements.showMidiNotesCheckbox,
+    elements.madImageEnabledCheckbox,
+    elements.madImageAlternateFlipCheckbox,
     elements.showPlayheadCheckbox,
     elements.showTimeOverlayCheckbox,
     elements.showMeasureOverlayCheckbox,

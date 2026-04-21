@@ -179,10 +179,56 @@
                   <strong id="canvasBorderWidthValue">1.00x</strong>
                 </div>
               </label>
+              <label class="field wide">
+                <span>音MAD画像パス</span>
+                <input id="madImagePathInput" type="text" placeholder="例: C:\素材\image.png">
+              </label>
+              <label class="field">
+                <span>音MAD登場アニメ</span>
+                <select id="madImageStyleSelect"></select>
+              </label>
+              <label class="field">
+                <span>音MAD画像サイズ</span>
+                <div class="slider-inline">
+                  <input id="madImageSizeInput" type="range" min="5" max="200" step="1">
+                  <strong id="madImageSizeValue">36%</strong>
+                </div>
+              </label>
+              <label class="field">
+                <span>音MAD表示時間</span>
+                <div class="slider-inline">
+                  <input id="madImageDurationInput" type="range" min="3" max="500" step="1">
+                  <strong id="madImageDurationValue">0.28秒</strong>
+                </div>
+              </label>
+              <label class="field">
+                <span>音MAD不透明度</span>
+                <div class="slider-inline">
+                  <input id="madImageOpacityInput" type="range" min="0" max="100" step="1">
+                  <strong id="madImageOpacityValue">100%</strong>
+                </div>
+              </label>
+              <label class="field">
+                <span>音MAD横位置</span>
+                <div class="slider-inline">
+                  <input id="madImagePositionXInput" type="range" min="0" max="100" step="1">
+                  <strong id="madImagePositionXValue">50%</strong>
+                </div>
+              </label>
+              <label class="field">
+                <span>音MAD縦位置</span>
+                <div class="slider-inline">
+                  <input id="madImagePositionYInput" type="range" min="0" max="100" step="1">
+                  <strong id="madImagePositionYValue">50%</strong>
+                </div>
+              </label>
             </div>
             <div class="toggle-grid">
               <label class="toggle-card"><input id="safeAreaEnabledCheckbox" type="checkbox"><span>縦動画セーフエリアを使う</span></label>
               <label class="toggle-card"><input id="canvasBorderEnabledCheckbox" type="checkbox"><span>動画範囲の枠を表示</span></label>
+              <label class="toggle-card"><input id="showMidiNotesCheckbox" type="checkbox"><span>MIDIノーツを表示</span></label>
+              <label class="toggle-card"><input id="madImageEnabledCheckbox" type="checkbox"><span>音MAD画像を使う</span></label>
+              <label class="toggle-card"><input id="madImageAlternateFlipCheckbox" type="checkbox"><span>1ノーツごとに左右反転</span></label>
               <label class="toggle-card"><input id="hideFutureNotesCheckbox" type="checkbox"><span>未再生ノーツを隠す</span></label>
               <label class="toggle-card"><input id="showPlayheadCheckbox" type="checkbox"><span>再生バー</span></label>
               <label class="toggle-card"><input id="showTimeOverlayCheckbox" type="checkbox"><span>時間と拍表示</span></label>

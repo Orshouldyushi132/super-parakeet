@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from .models import Measure, MidiProject, RenderSettings
+from .models import Measure, MidiProject, NoteEvent, RenderSettings
 
 try:
     import aggdraw
@@ -286,6 +286,9 @@ class ProjectRenderer:
             tuple[int, int, int, tuple[object, ...]],
             tuple[Image.Image, tuple[_PreparedSegment, ...]],
         ] = {}
+        self._mad_image_cache_path: str | None = None
+        self._mad_image_cache_mtime: float | None = None
+        self._mad_image_cache: Image.Image | None = None
 
     def set_settings(self, settings: RenderSettings) -> None:
         self.settings = settings
@@ -316,6 +319,11 @@ class ProjectRenderer:
         return self._render_measure_page_frame(clamped_time, width, height)
 
     def _render_measure_page_frame(self, clamped_time: float, width: int, height: int) -> Image.Image:
+        if not getattr(self.settings, "show_midi_notes", True):
+            image = Image.new("RGBA", (width, height), self._background_fill())
+            self._draw_mad_image_overlays(image, clamped_time, width, height)
+            return self._finalize_frame(image, width, height)
+
         settings = self.settings
         measure = self.get_measure_for_time(clamped_time)
         image, prepared_segments = self._get_prepared_measure(measure, width, height)
@@ -400,6 +408,7 @@ class ProjectRenderer:
             self._draw_active_segment(draw, item.base_rect, item.frame_rect, item.state)
 
         draw.flush()
+        self._draw_mad_image_overlays(image, clamped_time, width, height)
         return self._finalize_frame(image, width, height)
 
     def _render_performance_frame(self, clamped_time: float, width: int, height: int) -> Image.Image:
@@ -439,7 +448,9 @@ class ProjectRenderer:
         rectangle_height = max(2.0, lane_height * 0.56)
         min_rectangle_width = max(2.0, width * 0.0012)
 
-        if self.settings.show_measure_overlay:
+        show_midi_notes = getattr(self.settings, "show_midi_notes", True)
+
+        if show_midi_notes and self.settings.show_measure_overlay:
             self._draw_performance_grid(
                 draw,
                 visible_measures,
@@ -465,83 +476,84 @@ class ProjectRenderer:
         release_window_sec = self._release_fade_window_sec()
         release_enabled = self.settings.release_fade_style != "none" and release_window_sec > 0.0
 
-        for slot_index, measure in enumerate(visible_measures):
-            measure_x0 = left_padding + slot_index * measure_width
-            measure_x1 = measure_x0 + measure_width
-            for segment in self._measure_segments[measure.index]:
-                clipped_end_beat = self._segment_visible_end_beat(segment, clamped_time)
-                if clipped_end_beat <= segment.segment_start_beat + 1e-9:
-                    continue
+        if show_midi_notes:
+            for slot_index, measure in enumerate(visible_measures):
+                measure_x0 = left_padding + slot_index * measure_width
+                measure_x1 = measure_x0 + measure_width
+                for segment in self._measure_segments[measure.index]:
+                    clipped_end_beat = self._segment_visible_end_beat(segment, clamped_time)
+                    if clipped_end_beat <= segment.segment_start_beat + 1e-9:
+                        continue
 
-                x0 = measure_x0 + measure_width * (
-                    (segment.segment_start_beat - measure.start_beat) / max(measure.length_beats, 1e-9)
-                )
-                x1 = measure_x0 + measure_width * (
-                    (clipped_end_beat - measure.start_beat) / max(measure.length_beats, 1e-9)
-                )
-                if x1 - x0 < min_rectangle_width:
-                    x1 = x0 + min_rectangle_width
-                if x0 >= measure_x1 + 1e-6 or x1 <= measure_x0 - 1e-6:
-                    continue
+                    x0 = measure_x0 + measure_width * (
+                        (segment.segment_start_beat - measure.start_beat) / max(measure.length_beats, 1e-9)
+                    )
+                    x1 = measure_x0 + measure_width * (
+                        (clipped_end_beat - measure.start_beat) / max(measure.length_beats, 1e-9)
+                    )
+                    if x1 - x0 < min_rectangle_width:
+                        x1 = x0 + min_rectangle_width
+                    if x0 >= measure_x1 + 1e-6 or x1 <= measure_x0 - 1e-6:
+                        continue
 
-                pitch_index = max_note - segment.note
-                lane_top = top_padding + pitch_index * lane_height
-                y0 = lane_top + (lane_height - rectangle_height) / 2.0
-                y1 = y0 + rectangle_height
-                rect = self._scaled_note_rect((x0, y0, x1, y1), min_rectangle_width)
+                    pitch_index = max_note - segment.note
+                    lane_top = top_padding + pitch_index * lane_height
+                    y0 = lane_top + (lane_height - rectangle_height) / 2.0
+                    y1 = y0 + rectangle_height
+                    rect = self._scaled_note_rect((x0, y0, x1, y1), min_rectangle_width)
 
-                is_active = segment.note_start_sec <= clamped_time < segment.note_end_sec
-                if is_active:
-                    state = self._build_animation_state(segment, clamped_time)
-                    animated_rect = self._animated_rect(rect, state)
-                    active_items.append(_ActiveRenderItem(base_rect=rect, frame_rect=animated_rect, state=state))
-                    if afterimage_enabled:
-                        trail_items.append(
-                            _TrailRenderItem(
-                                base_rect=rect,
-                                frame_rect=animated_rect,
-                                age_ratio=0.0,
-                                is_active=True,
-                                state=state,
+                    is_active = segment.note_start_sec <= clamped_time < segment.note_end_sec
+                    if is_active:
+                        state = self._build_animation_state(segment, clamped_time)
+                        animated_rect = self._animated_rect(rect, state)
+                        active_items.append(_ActiveRenderItem(base_rect=rect, frame_rect=animated_rect, state=state))
+                        if afterimage_enabled:
+                            trail_items.append(
+                                _TrailRenderItem(
+                                    base_rect=rect,
+                                    frame_rect=animated_rect,
+                                    age_ratio=0.0,
+                                    is_active=True,
+                                    state=state,
+                                )
                             )
-                        )
-                    self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, self._rect_radius(animated_rect), state)
+                        self._draw_glow(glow_draw, crisp_glow_draw, animated_rect, self._rect_radius(animated_rect), state)
 
-                    attack_window = max(0.04, self.settings.attack_fade_duration_sec)
-                    attack_age = clamped_time - segment.note_start_sec
-                    if 0.0 <= attack_age <= attack_window:
-                        burst_items.append(
-                            (
-                                rect[0],
-                                (rect[1] + rect[3]) / 2.0,
-                                1.0 - attack_age / attack_window,
+                        attack_window = max(0.04, self.settings.attack_fade_duration_sec)
+                        attack_age = clamped_time - segment.note_start_sec
+                        if 0.0 <= attack_age <= attack_window:
+                            burst_items.append(
+                                (
+                                    rect[0],
+                                    (rect[1] + rect[3]) / 2.0,
+                                    1.0 - attack_age / attack_window,
+                                )
                             )
-                        )
-                else:
-                    self._draw_performance_idle_segment(draw, rect, is_finished=segment.note_end_sec <= clamped_time)
-                    note_age_sec = clamped_time - segment.note_end_sec
-                    if release_enabled and 0.0 <= note_age_sec <= release_window_sec:
-                        release_state = self._build_animation_state(
-                            segment,
-                            max(segment.note_start_sec, segment.note_end_sec - 1e-4),
-                        )
-                        release_items.append(
-                            _ReleaseRenderItem(
-                                base_rect=rect,
-                                frame_rect=self._animated_rect(rect, release_state),
-                                age_ratio=_clamp(note_age_sec / max(release_window_sec, 1e-6)),
-                                state=release_state,
+                    else:
+                        self._draw_performance_idle_segment(draw, rect, is_finished=segment.note_end_sec <= clamped_time)
+                        note_age_sec = clamped_time - segment.note_end_sec
+                        if release_enabled and 0.0 <= note_age_sec <= release_window_sec:
+                            release_state = self._build_animation_state(
+                                segment,
+                                max(segment.note_start_sec, segment.note_end_sec - 1e-4),
                             )
-                        )
-                    if afterimage_enabled and 0.0 <= note_age_sec <= trail_window_sec:
-                        trail_items.append(
-                            _TrailRenderItem(
-                                base_rect=rect,
-                                frame_rect=rect,
-                                age_ratio=_clamp(note_age_sec / max(trail_window_sec, 1e-6)),
-                                is_active=False,
+                            release_items.append(
+                                _ReleaseRenderItem(
+                                    base_rect=rect,
+                                    frame_rect=self._animated_rect(rect, release_state),
+                                    age_ratio=_clamp(note_age_sec / max(release_window_sec, 1e-6)),
+                                    state=release_state,
+                                )
                             )
-                        )
+                        if afterimage_enabled and 0.0 <= note_age_sec <= trail_window_sec:
+                            trail_items.append(
+                                _TrailRenderItem(
+                                    base_rect=rect,
+                                    frame_rect=rect,
+                                    age_ratio=_clamp(note_age_sec / max(trail_window_sec, 1e-6)),
+                                    is_active=False,
+                                )
+                            )
 
         glow_draw.flush()
         crisp_glow_draw.flush()
@@ -562,8 +574,9 @@ class ProjectRenderer:
             self._draw_contact_burst(draw, burst_x, burst_y, lane_height, burst_strength)
 
         draw.flush()
+        self._draw_mad_image_overlays(image, clamped_time, width, height)
 
-        if self.settings.show_playhead:
+        if show_midi_notes and self.settings.show_playhead:
             self._draw_playhead(
                 draw,
                 clamped_time,
@@ -1108,6 +1121,158 @@ class ProjectRenderer:
                 outline=_with_alpha(getattr(self.settings, "canvas_border_color", "#3f3f3f"), 72),
                 width=max(1, border_width // 2),
             )
+
+    def _draw_mad_image_overlays(self, image: Image.Image, time_sec: float, width: int, height: int) -> None:
+        if not getattr(self.settings, "mad_image_enabled", False):
+            return
+
+        asset = self._load_mad_image_asset()
+        if asset is None:
+            return
+
+        base_duration = max(0.03, float(getattr(self.settings, "mad_image_duration_sec", 0.28)))
+        base_size = max(1, int(round(min(width, height) * max(0.05, self.settings.mad_image_size))))
+        aspect = asset.width / max(1, asset.height)
+        target_width = max(1, int(round(base_size * aspect)))
+        target_height = max(1, base_size)
+        resample_filter = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+        base_sprite = asset.resize((target_width, target_height), resample_filter)
+
+        latest_index = bisect_right(self._note_start_seconds, time_sec + 1e-6)
+        candidates: list[tuple[int, NoteEvent, float]] = []
+        for note_index in range(latest_index - 1, -1, -1):
+            note = self.project.notes[note_index]
+            visible_duration = max(base_duration, note.end_sec - note.start_sec)
+            if note.start_sec < time_sec - 5.0 and note.end_sec < time_sec:
+                break
+            if not (note.start_sec <= time_sec < note.start_sec + visible_duration):
+                continue
+            candidates.append((note_index, note, visible_duration))
+
+        for note_index, note, visible_duration in reversed(candidates):
+            progress = _clamp((time_sec - note.start_sec) / max(visible_duration, 1e-6))
+            sprite, center_x, center_y = self._build_mad_sprite(
+                base_sprite,
+                progress,
+                note_index,
+                width,
+                height,
+            )
+            x = int(round(center_x - sprite.width / 2.0))
+            y = int(round(center_y - sprite.height / 2.0))
+            self._alpha_composite_clipped(image, sprite, x, y)
+
+    @staticmethod
+    def _alpha_composite_clipped(base: Image.Image, overlay: Image.Image, x: int, y: int) -> None:
+        left = max(0, -x)
+        top = max(0, -y)
+        right = min(overlay.width, base.width - x)
+        bottom = min(overlay.height, base.height - y)
+        if right <= left or bottom <= top:
+            return
+
+        if left or top or right != overlay.width or bottom != overlay.height:
+            overlay = overlay.crop((left, top, right, bottom))
+        base.alpha_composite(overlay, (x + left, y + top))
+
+    def _load_mad_image_asset(self) -> Image.Image | None:
+        path_value = getattr(self.settings, "mad_image_path", "").strip()
+        if not path_value:
+            return None
+
+        image_path = Path(path_value)
+        try:
+            modified_at = image_path.stat().st_mtime
+        except OSError:
+            return None
+
+        if (
+            self._mad_image_cache is not None
+            and self._mad_image_cache_path == str(image_path)
+            and self._mad_image_cache_mtime == modified_at
+        ):
+            return self._mad_image_cache
+
+        try:
+            loaded = Image.open(image_path).convert("RGBA")
+        except OSError:
+            return None
+
+        self._mad_image_cache_path = str(image_path)
+        self._mad_image_cache_mtime = modified_at
+        self._mad_image_cache = loaded
+        return loaded
+
+    def _build_mad_sprite(
+        self,
+        base_sprite: Image.Image,
+        progress: float,
+        note_index: int,
+        canvas_width: int,
+        canvas_height: int,
+    ) -> tuple[Image.Image, float, float]:
+        style = getattr(self.settings, "mad_image_style", "pop")
+        eased = 1.0 - (1.0 - progress) ** 3
+        wave = math.sin(progress * math.tau)
+        hard_step = 1.0 if math.sin(progress * math.tau * 4.0) >= 0.0 else 0.0
+        direction = -1.0 if note_index % 2 else 1.0
+
+        scale = 1.0
+        rotation = 0.0
+        offset_x = 0.0
+        offset_y = 0.0
+        opacity = max(0.0, min(1.0, float(getattr(self.settings, "mad_image_opacity", 1.0))))
+
+        if style == "cut":
+            scale = 1.0
+            opacity *= 1.0 if progress < 0.9 else _clamp((1.0 - progress) / 0.1)
+        elif style == "pop":
+            scale = 0.45 + 0.68 * eased + 0.1 * wave
+            opacity *= _clamp(progress / 0.08) * _clamp((1.0 - progress) / 0.12)
+        elif style == "zoom":
+            scale = 1.42 - 0.42 * eased + 0.08 * math.sin(progress * math.tau * 2.0)
+            opacity *= _clamp(progress / 0.06) * _clamp((1.0 - progress) / 0.12)
+        elif style == "slide":
+            scale = 0.94 + 0.08 * wave
+            offset_x = direction * canvas_width * 0.28 * (1.0 - eased)
+            opacity *= _clamp(progress / 0.08) * _clamp((1.0 - progress) / 0.14)
+        elif style == "spin":
+            scale = 0.62 + 0.42 * eased
+            rotation = direction * (34.0 * (1.0 - eased) + 5.0 * wave)
+            opacity *= _clamp(progress / 0.1) * _clamp((1.0 - progress) / 0.14)
+        elif style == "shake":
+            scale = 1.0 + 0.08 * hard_step
+            offset_x = direction * canvas_width * 0.012 * math.sin(progress * math.tau * 9.0)
+            offset_y = canvas_height * 0.012 * math.cos(progress * math.tau * 7.0)
+            rotation = direction * 4.0 * math.sin(progress * math.tau * 5.0)
+            opacity *= _clamp((1.0 - progress) / 0.14)
+        elif style == "bounce":
+            scale = 0.82 + 0.22 * eased + 0.08 * abs(wave)
+            offset_y = -canvas_height * 0.11 * abs(wave)
+            opacity *= _clamp(progress / 0.08) * _clamp((1.0 - progress) / 0.14)
+        elif style == "strobe":
+            scale = 1.0 + 0.12 * hard_step
+            opacity *= 0.45 + 0.55 * hard_step
+            rotation = direction * 2.0 * hard_step
+
+        sprite = base_sprite
+        if getattr(self.settings, "mad_image_alternate_flip", True) and note_index % 2 == 1:
+            sprite = sprite.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+
+        scaled_width = max(1, int(round(sprite.width * max(0.05, scale))))
+        scaled_height = max(1, int(round(sprite.height * max(0.05, scale))))
+        resample_filter = Image.Resampling.BICUBIC if hasattr(Image, "Resampling") else Image.BICUBIC
+        if (scaled_width, scaled_height) != sprite.size:
+            sprite = sprite.resize((scaled_width, scaled_height), resample_filter)
+        if abs(rotation) > 0.01:
+            sprite = sprite.rotate(rotation, resample=resample_filter, expand=True)
+
+        if opacity < 0.995:
+            sprite = _scale_image_alpha(sprite, opacity)
+
+        center_x = canvas_width * _clamp(float(getattr(self.settings, "mad_image_position_x", 0.5))) + offset_x
+        center_y = canvas_height * _clamp(float(getattr(self.settings, "mad_image_position_y", 0.5))) + offset_y
+        return sprite, center_x, center_y
 
     @staticmethod
     def _overlay_scale(width: float, height: float) -> float:

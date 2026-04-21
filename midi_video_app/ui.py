@@ -37,6 +37,7 @@ from .models import (
     DEFAULT_THEME_NAME,
     FONT_FAMILY_CHOICES,
     GLOW_STYLE_CHOICES,
+    MAD_IMAGE_STYLE_CHOICES,
     RELEASE_FADE_CURVE_CHOICES,
     RELEASE_FADE_STYLE_CHOICES,
     VIEW_MODE_CHOICES,
@@ -104,6 +105,8 @@ class MidiVideoApp:
         self._glow_label_to_value = {label: value for value, label in GLOW_STYLE_CHOICES}
         self._animation_value_to_label = {value: label for value, label in ANIMATION_STYLE_CHOICES}
         self._animation_label_to_value = {label: value for value, label in ANIMATION_STYLE_CHOICES}
+        self._mad_image_style_value_to_label = {value: label for value, label in MAD_IMAGE_STYLE_CHOICES}
+        self._mad_image_style_label_to_value = {label: value for value, label in MAD_IMAGE_STYLE_CHOICES}
         self._afterimage_value_to_label = {value: label for value, label in AFTERIMAGE_STYLE_CHOICES}
         self._afterimage_label_to_value = {label: value for value, label in AFTERIMAGE_STYLE_CHOICES}
         self._corner_value_to_label = {value: label for value, label in CORNER_STYLE_CHOICES}
@@ -157,6 +160,9 @@ class MidiVideoApp:
         self.corner_style_var = tk.StringVar(value=self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var = tk.StringVar(value=self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var = tk.StringVar(value=self._animation_value_to_label[self.render_settings.animation_style])
+        self.mad_image_style_var = tk.StringVar(
+            value=self._mad_image_style_value_to_label[self.render_settings.mad_image_style]
+        )
         self.afterimage_style_var = tk.StringVar(value=self._afterimage_value_to_label[self.render_settings.afterimage_style])
         self.release_fade_style_var = tk.StringVar(
             value=self._release_fade_value_to_label[self.render_settings.release_fade_style]
@@ -176,6 +182,14 @@ class MidiVideoApp:
         self.safe_area_scale_var = tk.DoubleVar(value=self.render_settings.safe_area_scale * 100.0)
         self.canvas_border_enabled_var = tk.BooleanVar(value=self.render_settings.canvas_border_enabled)
         self.canvas_border_width_var = tk.DoubleVar(value=self.render_settings.canvas_border_width * 100.0)
+        self.show_midi_notes_var = tk.BooleanVar(value=self.render_settings.show_midi_notes)
+        self.mad_image_enabled_var = tk.BooleanVar(value=self.render_settings.mad_image_enabled)
+        self.mad_image_alternate_flip_var = tk.BooleanVar(value=self.render_settings.mad_image_alternate_flip)
+        self.mad_image_size_var = tk.DoubleVar(value=self.render_settings.mad_image_size * 100.0)
+        self.mad_image_duration_var = tk.DoubleVar(value=self.render_settings.mad_image_duration_sec * 100.0)
+        self.mad_image_opacity_var = tk.DoubleVar(value=self.render_settings.mad_image_opacity * 100.0)
+        self.mad_image_position_x_var = tk.DoubleVar(value=self.render_settings.mad_image_position_x * 100.0)
+        self.mad_image_position_y_var = tk.DoubleVar(value=self.render_settings.mad_image_position_y * 100.0)
         self.transparent_background_var = tk.BooleanVar(value=self.render_settings.transparent_background)
         self.fit_to_visible_note_range_var = tk.BooleanVar(value=self.render_settings.fit_to_visible_note_range)
         self.hide_future_notes_var = tk.BooleanVar(value=self.render_settings.hide_future_notes)
@@ -213,6 +227,11 @@ class MidiVideoApp:
         self.lyrics_space_scale_text_var = tk.StringVar()
         self.safe_area_scale_text_var = tk.StringVar()
         self.canvas_border_width_text_var = tk.StringVar()
+        self.mad_image_size_text_var = tk.StringVar()
+        self.mad_image_duration_text_var = tk.StringVar()
+        self.mad_image_opacity_text_var = tk.StringVar()
+        self.mad_image_position_x_text_var = tk.StringVar()
+        self.mad_image_position_y_text_var = tk.StringVar()
         self.horizontal_padding_text_var = tk.StringVar()
         self.vertical_padding_text_var = tk.StringVar()
         self.idle_outline_width_text_var = tk.StringVar()
@@ -226,6 +245,7 @@ class MidiVideoApp:
         self.midi_audio_volume_text_var = tk.StringVar()
         self.backing_audio_volume_text_var = tk.StringVar()
         self.backing_audio_path_var = tk.StringVar(value="追加の音声ファイル: なし")
+        self.mad_image_path_var = tk.StringVar(value="音MAD画像: なし")
 
         self._color_labels = {
             "background_color": "背景色",
@@ -364,18 +384,21 @@ class MidiVideoApp:
         basic_tab = ttk.Frame(notebook, padding=12)
         color_tab = ttk.Frame(notebook, padding=12)
         effect_tab = ttk.Frame(notebook, padding=12)
+        mad_tab = ttk.Frame(notebook, padding=12)
         detail_tab = ttk.Frame(notebook, padding=12)
         export_tab = ttk.Frame(notebook, padding=12)
 
         notebook.add(basic_tab, text="基本")
         notebook.add(color_tab, text="色")
         notebook.add(effect_tab, text="演出")
+        notebook.add(mad_tab, text="音MAD")
         notebook.add(detail_tab, text="詳細")
         notebook.add(export_tab, text="書き出し")
 
         self._build_basic_settings_tab(basic_tab)
         self._build_color_settings_tab(color_tab)
         self._build_effect_settings_tab(effect_tab)
+        self._build_mad_settings_tab(mad_tab)
         self._build_detail_settings_tab(detail_tab)
         self._build_export_settings_tab(export_tab)
 
@@ -748,6 +771,84 @@ class MidiVideoApp:
             ("残像の時間", self.afterimage_duration_var, self.afterimage_duration_text_var, 0, 200),
             ("フェードアウト時間", self.release_fade_duration_var, self.release_fade_duration_text_var, 0, 200),
             ("フェードイン時間", self.attack_fade_duration_var, self.attack_fade_duration_text_var, 0, 200),
+        ):
+            row += 1
+            self._add_slider_control(
+                panel,
+                row,
+                label,
+                variable,
+                text_variable,
+                minimum,
+                maximum,
+                self._on_strength_changed,
+            )
+
+    def _build_mad_settings_tab(self, panel: ttk.Frame) -> None:
+        row = 0
+        panel.columnconfigure(1, weight=1)
+        panel.columnconfigure(2, weight=1)
+
+        ttk.Label(
+            panel,
+            text="MIDIノーツの開始タイミングに合わせて、1枚の画像素材を音MAD風に出現させます。",
+            wraplength=320,
+            justify="left",
+        ).grid(row=row, column=0, columnspan=4, sticky="w")
+
+        row += 1
+        ttk.Checkbutton(
+            panel,
+            text="音MAD画像を使う",
+            variable=self.mad_image_enabled_var,
+            command=self._on_toggle_changed,
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Checkbutton(
+            panel,
+            text="MIDIノーツを表示",
+            variable=self.show_midi_notes_var,
+            command=self._on_toggle_changed,
+        ).grid(row=row, column=2, columnspan=2, sticky="w", pady=(10, 0))
+
+        row += 1
+        ttk.Label(panel, textvariable=self.mad_image_path_var, style="Muted.TLabel", wraplength=320, justify="left").grid(
+            row=row,
+            column=0,
+            columnspan=4,
+            sticky="w",
+            pady=(8, 0),
+        )
+
+        row += 1
+        image_row = ttk.Frame(panel)
+        image_row.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        ttk.Button(image_row, text="画像ファイルを選ぶ", command=self._choose_mad_image).pack(side="left")
+        ttk.Button(image_row, text="画像を外す", command=self._clear_mad_image).pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(
+            image_row,
+            text="1ノーツごとに左右反転",
+            variable=self.mad_image_alternate_flip_var,
+            command=self._on_toggle_changed,
+        ).pack(side="left", padx=(10, 0))
+
+        row += 1
+        ttk.Label(panel, text="登場アニメーション").grid(row=row, column=0, sticky="w", pady=(10, 0))
+        self.mad_image_style_combo = ttk.Combobox(
+            panel,
+            state="readonly",
+            values=[label for _, label in MAD_IMAGE_STYLE_CHOICES],
+            textvariable=self.mad_image_style_var,
+            width=16,
+        )
+        self.mad_image_style_combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(10, 0))
+        self.mad_image_style_combo.bind("<<ComboboxSelected>>", self._on_style_changed)
+
+        for label, variable, text_variable, minimum, maximum in (
+            ("画像サイズ", self.mad_image_size_var, self.mad_image_size_text_var, 5, 200),
+            ("表示時間", self.mad_image_duration_var, self.mad_image_duration_text_var, 3, 500),
+            ("不透明度", self.mad_image_opacity_var, self.mad_image_opacity_text_var, 0, 100),
+            ("横位置", self.mad_image_position_x_var, self.mad_image_position_x_text_var, 0, 100),
+            ("縦位置", self.mad_image_position_y_var, self.mad_image_position_y_text_var, 0, 100),
         ):
             row += 1
             self._add_slider_control(
@@ -1147,6 +1248,7 @@ class MidiVideoApp:
                 hidden_text="選択済み",
             )
             self.backing_audio_path_var.set(f"追加の音声ファイル: {audio_display}")
+        self._refresh_mad_image_label()
 
     def _refresh_custom_font_label(self) -> None:
         font_path = getattr(self.render_settings, "custom_font_path", "")
@@ -1159,6 +1261,18 @@ class MidiVideoApp:
             hidden_text="選択済み",
         )
         self.custom_font_path_var.set(f"カスタムフォント: {font_display}")
+
+    def _refresh_mad_image_label(self) -> None:
+        image_path = getattr(self.render_settings, "mad_image_path", "")
+        if not image_path:
+            self.mad_image_path_var.set("音MAD画像: なし")
+            return
+
+        image_display = self._format_path_for_display(
+            Path(image_path),
+            hidden_text="選択済み",
+        )
+        self.mad_image_path_var.set(f"音MAD画像: {image_display}")
 
     def _get_preview_dimensions(self) -> tuple[int, int]:
         width, height = self._selected_export_dimensions()
@@ -1352,6 +1466,7 @@ class MidiVideoApp:
     def _on_path_display_changed(self, _event=None) -> None:
         self._refresh_path_labels()
         self._refresh_custom_font_label()
+        self._refresh_mad_image_label()
 
     def _start_audio_preview(self) -> None:
         if not self.project:
@@ -1449,6 +1564,38 @@ class MidiVideoApp:
         self._refresh_custom_font_label()
         self._refresh_preview_if_loaded()
 
+    def _choose_mad_image(self) -> None:
+        image_path = filedialog.askopenfilename(
+            title="音MAD画像ファイルを選択",
+            filetypes=[
+                ("画像ファイル", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"),
+                ("すべてのファイル", "*.*"),
+            ],
+        )
+        if not image_path:
+            return
+
+        self.render_settings.mad_image_path = str(Path(image_path))
+        self.render_settings.mad_image_enabled = True
+        self.mad_image_enabled_var.set(True)
+        if self.renderer:
+            self.renderer.set_settings(self.render_settings)
+        self.theme_var.set(CUSTOM_THEME_NAME)
+        self.preset_name_var.set("")
+        self._refresh_mad_image_label()
+        self._refresh_preview_if_loaded()
+
+    def _clear_mad_image(self) -> None:
+        self.render_settings.mad_image_path = ""
+        self.render_settings.mad_image_enabled = False
+        self.mad_image_enabled_var.set(False)
+        if self.renderer:
+            self.renderer.set_settings(self.render_settings)
+        self.theme_var.set(CUSTOM_THEME_NAME)
+        self.preset_name_var.set("")
+        self._refresh_mad_image_label()
+        self._refresh_preview_if_loaded()
+
     def _choose_color(self, field_name: str) -> None:
         initial_color = getattr(self.render_settings, field_name)
         selected = colorchooser.askcolor(color=initial_color, title=f"{self._color_labels[field_name]}を選択", parent=self.root)
@@ -1499,6 +1646,7 @@ class MidiVideoApp:
         self.render_settings.corner_style = self._corner_label_to_value[self.corner_style_var.get()]
         self.render_settings.glow_style = self._glow_label_to_value[self.glow_style_var.get()]
         self.render_settings.animation_style = self._animation_label_to_value[self.animation_style_var.get()]
+        self.render_settings.mad_image_style = self._mad_image_style_label_to_value[self.mad_image_style_var.get()]
         self.render_settings.afterimage_style = self._afterimage_label_to_value[self.afterimage_style_var.get()]
         self.render_settings.release_fade_style = self._release_fade_label_to_value[self.release_fade_style_var.get()]
         self.render_settings.release_fade_curve = self._release_curve_label_to_value[self.release_fade_curve_var.get()]
@@ -1517,6 +1665,9 @@ class MidiVideoApp:
         self.render_settings.transparent_background = bool(self.transparent_background_var.get())
         self.render_settings.safe_area_enabled = bool(self.safe_area_enabled_var.get())
         self.render_settings.canvas_border_enabled = bool(self.canvas_border_enabled_var.get())
+        self.render_settings.show_midi_notes = bool(self.show_midi_notes_var.get())
+        self.render_settings.mad_image_enabled = bool(self.mad_image_enabled_var.get())
+        self.render_settings.mad_image_alternate_flip = bool(self.mad_image_alternate_flip_var.get())
         self.render_settings.fit_to_visible_note_range = bool(self.fit_to_visible_note_range_var.get())
         self.render_settings.hide_future_notes = bool(self.hide_future_notes_var.get())
         self.render_settings.show_time_overlay = bool(self.show_time_overlay_var.get())
@@ -1540,6 +1691,11 @@ class MidiVideoApp:
         self.render_settings.lyrics_space_scale = round(self.lyrics_space_scale_var.get() / 100.0, 3)
         self.render_settings.safe_area_scale = round(self.safe_area_scale_var.get() / 100.0, 3)
         self.render_settings.canvas_border_width = round(self.canvas_border_width_var.get() / 100.0, 3)
+        self.render_settings.mad_image_size = round(self.mad_image_size_var.get() / 100.0, 3)
+        self.render_settings.mad_image_duration_sec = round(self.mad_image_duration_var.get() / 100.0, 3)
+        self.render_settings.mad_image_opacity = round(self.mad_image_opacity_var.get() / 100.0, 3)
+        self.render_settings.mad_image_position_x = round(self.mad_image_position_x_var.get() / 100.0, 3)
+        self.render_settings.mad_image_position_y = round(self.mad_image_position_y_var.get() / 100.0, 3)
         self.render_settings.glow_strength = round(self.glow_strength_var.get() / 100.0, 3)
         self.render_settings.animation_strength = round(self.animation_strength_var.get() / 100.0, 3)
         self.render_settings.animation_speed = round(self.animation_speed_var.get() / 100.0, 3)
@@ -1577,6 +1733,7 @@ class MidiVideoApp:
         self.corner_style_var.set(self._corner_value_to_label[self.render_settings.corner_style])
         self.glow_style_var.set(self._glow_value_to_label[self.render_settings.glow_style])
         self.animation_style_var.set(self._animation_value_to_label[self.render_settings.animation_style])
+        self.mad_image_style_var.set(self._mad_image_style_value_to_label[self.render_settings.mad_image_style])
         self.afterimage_style_var.set(self._afterimage_value_to_label[self.render_settings.afterimage_style])
         self.release_fade_style_var.set(self._release_fade_value_to_label[self.render_settings.release_fade_style])
         self.release_fade_curve_var.set(self._release_curve_value_to_label[self.render_settings.release_fade_curve])
@@ -1588,6 +1745,14 @@ class MidiVideoApp:
         self.safe_area_scale_var.set(self.render_settings.safe_area_scale * 100.0)
         self.canvas_border_enabled_var.set(self.render_settings.canvas_border_enabled)
         self.canvas_border_width_var.set(self.render_settings.canvas_border_width * 100.0)
+        self.show_midi_notes_var.set(self.render_settings.show_midi_notes)
+        self.mad_image_enabled_var.set(self.render_settings.mad_image_enabled)
+        self.mad_image_alternate_flip_var.set(self.render_settings.mad_image_alternate_flip)
+        self.mad_image_size_var.set(self.render_settings.mad_image_size * 100.0)
+        self.mad_image_duration_var.set(self.render_settings.mad_image_duration_sec * 100.0)
+        self.mad_image_opacity_var.set(self.render_settings.mad_image_opacity * 100.0)
+        self.mad_image_position_x_var.set(self.render_settings.mad_image_position_x * 100.0)
+        self.mad_image_position_y_var.set(self.render_settings.mad_image_position_y * 100.0)
         self.transparent_background_var.set(self.render_settings.transparent_background)
         self.fit_to_visible_note_range_var.set(self.render_settings.fit_to_visible_note_range)
         self.hide_future_notes_var.set(self.render_settings.hide_future_notes)
@@ -1623,6 +1788,7 @@ class MidiVideoApp:
         self._update_preset_button_states()
         self._update_export_option_state()
         self._refresh_custom_font_label()
+        self._refresh_mad_image_label()
 
         self._updating_style_controls = False
 
@@ -1637,6 +1803,11 @@ class MidiVideoApp:
         self.lyrics_space_scale_text_var.set(f"{self.lyrics_space_scale_var.get():.0f}%")
         self.safe_area_scale_text_var.set(f"{self.safe_area_scale_var.get():.0f}%")
         self.canvas_border_width_text_var.set(f"{self.canvas_border_width_var.get() / 100.0:.2f}x")
+        self.mad_image_size_text_var.set(f"{self.mad_image_size_var.get():.0f}%")
+        self.mad_image_duration_text_var.set(f"{self.mad_image_duration_var.get() / 100.0:.2f}秒")
+        self.mad_image_opacity_text_var.set(f"{self.mad_image_opacity_var.get():.0f}%")
+        self.mad_image_position_x_text_var.set(f"{self.mad_image_position_x_var.get():.0f}%")
+        self.mad_image_position_y_text_var.set(f"{self.mad_image_position_y_var.get():.0f}%")
         self.horizontal_padding_text_var.set(f"{self.horizontal_padding_var.get():.0f}%")
         self.vertical_padding_text_var.set(f"{self.vertical_padding_var.get():.0f}%")
         self.idle_outline_width_text_var.set(f"{self.idle_outline_width_var.get() / 100.0:.2f}x")
