@@ -98,6 +98,8 @@ class RenderSettings:
     yatsume_size: float = 0.3
     yatsume_duration_sec: float = 0.22
     yatsume_outline_width: float = 1.0
+    yatsume_position_x: float = 0.5
+    yatsume_position_y: float = 0.5
     show_midi_notes: bool = True
     mad_image_enabled: bool = False
     mad_image_path: str = ""
@@ -470,6 +472,8 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "yatsume_size": (0.05, 1.2),
         "yatsume_duration_sec": (0.03, 3.0),
         "yatsume_outline_width": (0.1, 5.0),
+        "yatsume_position_x": (0.0, 1.0),
+        "yatsume_position_y": (0.0, 1.0),
         "mad_image_size": (0.05, 2.0),
         "mad_image_duration_sec": (0.03, 5.0),
         "mad_image_opacity": (0.0, 1.0),

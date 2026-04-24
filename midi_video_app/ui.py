@@ -191,6 +191,8 @@ class MidiVideoApp:
         self.yatsume_size_var = tk.DoubleVar(value=self.render_settings.yatsume_size * 100.0)
         self.yatsume_duration_var = tk.DoubleVar(value=self.render_settings.yatsume_duration_sec * 100.0)
         self.yatsume_outline_width_var = tk.DoubleVar(value=self.render_settings.yatsume_outline_width * 100.0)
+        self.yatsume_position_x_var = tk.DoubleVar(value=self.render_settings.yatsume_position_x * 100.0)
+        self.yatsume_position_y_var = tk.DoubleVar(value=self.render_settings.yatsume_position_y * 100.0)
         self.yatsume_seek_var = tk.DoubleVar(value=0.0)
         self.show_midi_notes_var = tk.BooleanVar(value=self.render_settings.show_midi_notes)
         self.mad_image_enabled_var = tk.BooleanVar(value=self.render_settings.mad_image_enabled)
@@ -240,6 +242,8 @@ class MidiVideoApp:
         self.yatsume_size_text_var = tk.StringVar()
         self.yatsume_duration_text_var = tk.StringVar()
         self.yatsume_outline_width_text_var = tk.StringVar()
+        self.yatsume_position_x_text_var = tk.StringVar()
+        self.yatsume_position_y_text_var = tk.StringVar()
         self.yatsume_seek_time_var = tk.StringVar(value="00:00.000 / 00:00.000")
         self.mad_image_size_text_var = tk.StringVar()
         self.mad_image_duration_text_var = tk.StringVar()
@@ -996,6 +1000,30 @@ class MidiVideoApp:
                 maximum,
                 self._on_strength_changed,
             )
+
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "横位置",
+            self.yatsume_position_x_var,
+            self.yatsume_position_x_text_var,
+            0,
+            100,
+            self._on_strength_changed,
+        )
+
+        row += 1
+        self._add_slider_control(
+            panel,
+            row,
+            "縦位置",
+            self.yatsume_position_y_var,
+            self.yatsume_position_y_text_var,
+            0,
+            100,
+            self._on_strength_changed,
+        )
 
     def _build_detail_settings_tab(self, panel: ttk.Frame) -> None:
         row = 0
@@ -2079,6 +2107,8 @@ class MidiVideoApp:
         self.render_settings.yatsume_size = round(self.yatsume_size_var.get() / 100.0, 3)
         self.render_settings.yatsume_duration_sec = round(self.yatsume_duration_var.get() / 100.0, 3)
         self.render_settings.yatsume_outline_width = round(self.yatsume_outline_width_var.get() / 100.0, 3)
+        self.render_settings.yatsume_position_x = round(self.yatsume_position_x_var.get() / 100.0, 3)
+        self.render_settings.yatsume_position_y = round(self.yatsume_position_y_var.get() / 100.0, 3)
         self.render_settings.mad_image_size = round(self.mad_image_size_var.get() / 100.0, 3)
         self.render_settings.mad_image_duration_sec = round(self.mad_image_duration_var.get() / 100.0, 3)
         self.render_settings.mad_image_opacity = round(self.mad_image_opacity_var.get() / 100.0, 3)
@@ -2137,6 +2167,8 @@ class MidiVideoApp:
         self.yatsume_size_var.set(self.render_settings.yatsume_size * 100.0)
         self.yatsume_duration_var.set(self.render_settings.yatsume_duration_sec * 100.0)
         self.yatsume_outline_width_var.set(self.render_settings.yatsume_outline_width * 100.0)
+        self.yatsume_position_x_var.set(self.render_settings.yatsume_position_x * 100.0)
+        self.yatsume_position_y_var.set(self.render_settings.yatsume_position_y * 100.0)
         self.show_midi_notes_var.set(self.render_settings.show_midi_notes)
         self.mad_image_enabled_var.set(self.render_settings.mad_image_enabled)
         self.mad_image_alternate_flip_var.set(self.render_settings.mad_image_alternate_flip)
@@ -2201,6 +2233,8 @@ class MidiVideoApp:
         self.yatsume_size_text_var.set(f"{self.yatsume_size_var.get():.0f}%")
         self.yatsume_duration_text_var.set(f"{self.yatsume_duration_var.get() / 100.0:.2f}秒")
         self.yatsume_outline_width_text_var.set(f"{self.yatsume_outline_width_var.get() / 100.0:.2f}x")
+        self.yatsume_position_x_text_var.set(f"{self.yatsume_position_x_var.get():.0f}%")
+        self.yatsume_position_y_text_var.set(f"{self.yatsume_position_y_var.get():.0f}%")
         self.mad_image_size_text_var.set(f"{self.mad_image_size_var.get():.0f}%")
         self.mad_image_duration_text_var.set(f"{self.mad_image_duration_var.get() / 100.0:.2f}秒")
         self.mad_image_opacity_text_var.set(f"{self.mad_image_opacity_var.get():.0f}%")

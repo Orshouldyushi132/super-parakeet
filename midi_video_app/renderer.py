@@ -1292,23 +1292,20 @@ class ProjectRenderer:
             return
 
         duration = max(0.03, float(getattr(self.settings, "yatsume_duration_sec", 0.22)))
-        kick_strength = self._yatsume_hit_strength(getattr(self.settings, "yatsume_kick_note", 36), time_sec, duration)
-        hihat_strength = self._yatsume_hit_strength(getattr(self.settings, "yatsume_hihat_note", 42), time_sec, duration)
-        clap_strength = self._yatsume_hit_strength(getattr(self.settings, "yatsume_clap_note", 39), time_sec, duration)
-        cymbal_strength = self._yatsume_hit_strength(getattr(self.settings, "yatsume_cymbal_note", 49), time_sec, duration)
+        kick_state = self._yatsume_hit_state(getattr(self.settings, "yatsume_kick_note", 36), time_sec, duration)
+        hihat_state = self._yatsume_hit_state(getattr(self.settings, "yatsume_hihat_note", 42), time_sec, duration)
+        clap_state = self._yatsume_hit_state(getattr(self.settings, "yatsume_clap_note", 39), time_sec, duration)
+        cymbal_state = self._yatsume_hit_state(getattr(self.settings, "yatsume_cymbal_note", 49), time_sec, duration)
 
-        if max(kick_strength, hihat_strength, clap_strength, cymbal_strength) <= 0.0:
+        if not any((kick_state, hihat_state, clap_state, cymbal_state)):
             return
 
-        draw = ImageDraw.Draw(image, "RGBA")
-        center_x = width / 2.0
-        center_y = height / 2.0
+        center_x = width * _clamp(float(getattr(self.settings, "yatsume_position_x", 0.5)))
+        center_y = height * _clamp(float(getattr(self.settings, "yatsume_position_y", 0.5)))
         base_size = max(12.0, min(width, height) * max(0.05, float(getattr(self.settings, "yatsume_size", 0.3))))
         line_width = max(1, int(round(base_size * 0.028 * max(0.1, float(getattr(self.settings, "yatsume_outline_width", 1.0))))))
-        rail_width = max(4.0, base_size * 0.1)
-        rail_height = base_size * 0.96
-        rail_gap = base_size * 0.17
-        rail_offset = base_size * 0.61
+        pixel_size = max(3, int(round(base_size * 0.025)))
+        line_width = max(pixel_size, int(round(line_width / max(pixel_size, 1))) * pixel_size)
         outer_rect = (
             center_x - base_size / 2.0,
             center_y - base_size / 2.0,
@@ -1333,84 +1330,237 @@ class ProjectRenderer:
         outline_color = getattr(self.settings, "yatsume_outline_color", "#ffffff")
         fill_color = getattr(self.settings, "yatsume_fill_color", "#ffffff")
 
-        if kick_strength > 0.0:
-            draw.rectangle(
-                _normalize_rect(outer_rect),
-                outline=_with_alpha(outline_color, int(255 * kick_strength)),
-                width=line_width,
+        overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay, "RGBA")
+        outline_fill = _with_alpha(outline_color, 255)
+        center_fill = _with_alpha(fill_color, 255)
+
+        if kick_state is not None:
+            self._draw_yatsume_block_groups(
+                draw,
+                self._build_yatsume_outer_groups(outer_rect, line_width),
+                outline_fill,
+                pixel_size,
+                kick_state[1],
             )
 
-        if hihat_strength > 0.0:
-            segment_gap = max(3.0, rail_height * 0.03)
-            segment_height = (rail_height - segment_gap * 4.0) / 5.0
-            rail_fill = _with_alpha(outline_color, int(255 * hihat_strength))
-            top_y = center_y - rail_height / 2.0
-            for rail_direction in (-1.0, 1.0):
-                rail_center_x = center_x + rail_direction * rail_offset
-                x0 = rail_center_x - rail_width / 2.0
-                x1 = rail_center_x + rail_width / 2.0
-                for segment_index in range(5):
-                    y0 = top_y + segment_index * (segment_height + segment_gap)
-                    y1 = y0 + segment_height
-                    draw.rectangle(_normalize_rect((x0, y0, x1, y1)), fill=rail_fill)
-                cap_width = rail_width * 0.7
-                draw.rectangle(
-                    _normalize_rect((rail_center_x - cap_width / 2.0, top_y - segment_gap * 0.7, rail_center_x + cap_width / 2.0, top_y - segment_gap * 0.18)),
-                    fill=rail_fill,
-                )
-                draw.rectangle(
-                    _normalize_rect((rail_center_x - cap_width / 2.0, top_y + rail_height + segment_gap * 0.18, rail_center_x + cap_width / 2.0, top_y + rail_height + segment_gap * 0.7)),
-                    fill=rail_fill,
-                )
-                if kick_strength > 0.0:
-                    bridge_alpha = int(86 * max(kick_strength, hihat_strength))
-                    draw.line(
-                        (
-                            rail_center_x - rail_direction * rail_gap,
-                            center_y,
-                            center_x + rail_direction * (base_size / 2.0 + rail_gap * 0.2),
-                            center_y,
-                        ),
-                        fill=_with_alpha(outline_color, bridge_alpha),
-                        width=max(1, line_width // 2),
-                    )
-
-        if clap_strength > 0.0:
-            draw.rectangle(
-                _normalize_rect(clap_rect),
-                outline=_with_alpha(outline_color, int(255 * clap_strength)),
-                width=max(1, int(round(line_width * 0.9))),
+        if hihat_state is not None:
+            self._draw_yatsume_block_groups(
+                draw,
+                self._build_yatsume_hihat_groups(center_x, center_y, base_size, line_width),
+                outline_fill,
+                pixel_size,
+                hihat_state[1],
             )
 
-        if cymbal_strength > 0.0:
-            draw.rectangle(
-                _normalize_rect(cymbal_rect),
-                fill=_with_alpha(fill_color, int(255 * cymbal_strength)),
+        if clap_state is not None:
+            self._draw_yatsume_block_groups(
+                draw,
+                self._build_yatsume_clap_groups(clap_rect, max(pixel_size, int(round(line_width * 0.9)))),
+                outline_fill,
+                pixel_size,
+                clap_state[1],
             )
 
-    def _yatsume_hit_strength(self, note_number: int, time_sec: float, duration_sec: float) -> float:
+        if cymbal_state is not None:
+            self._draw_yatsume_block_groups(
+                draw,
+                self._build_yatsume_cymbal_groups(cymbal_rect),
+                center_fill,
+                pixel_size,
+                cymbal_state[1],
+            )
+
+        image.alpha_composite(overlay)
+
+    def _yatsume_hit_state(self, note_number: int, time_sec: float, duration_sec: float) -> tuple[float, float] | None:
         starts = self._yatsume_note_start_seconds.get(int(note_number))
         if not starts:
-            return 0.0
+            return None
 
         index = bisect_right(starts, time_sec + 1e-9) - 1
         if index < 0:
-            return 0.0
+            return None
 
-        strongest = 0.0
-        while index >= 0:
-            elapsed = time_sec - starts[index]
-            if elapsed < 0.0:
-                index -= 1
-                continue
-            if elapsed > duration_sec:
-                break
-            fade = 1.0 - _clamp(elapsed / max(duration_sec, 1e-6))
-            strength = fade * fade
-            if strength > strongest:
-                strongest = strength
-            index -= 1
-        return strongest
+        elapsed = time_sec - starts[index]
+        if elapsed < 0.0 or elapsed > duration_sec:
+            return None
+
+        attack_window = min(duration_sec, max(0.045, duration_sec * 0.38))
+        progress = _clamp(elapsed / max(attack_window, 1e-6))
+        return elapsed, progress
+
+    def _draw_yatsume_block_groups(
+        self,
+        draw: ImageDraw.ImageDraw,
+        groups: list[list[tuple[float, float, float, float]]],
+        color: tuple[int, int, int, int],
+        pixel_size: int,
+        progress: float,
+    ) -> None:
+        visible_groups = self._yatsume_visible_step_count(progress, len(groups))
+        for group in groups[:visible_groups]:
+            for rect in group:
+                draw.rectangle(self._yatsume_snap_rect(rect, pixel_size), fill=color)
+
+    @staticmethod
+    def _yatsume_visible_step_count(progress: float, total_steps: int) -> int:
+        if total_steps <= 0:
+            return 0
+        stepped_progress = _clamp(progress)
+        return max(1, min(total_steps, int(math.floor(stepped_progress * total_steps + 1e-9)) + 1))
+
+    @staticmethod
+    def _yatsume_snap_rect(rect: tuple[float, float, float, float], pixel_size: int) -> tuple[float, float, float, float]:
+        x0, y0, x1, y1 = rect
+        snapped = (
+            math.floor(x0 / max(pixel_size, 1)) * pixel_size,
+            math.floor(y0 / max(pixel_size, 1)) * pixel_size,
+            math.ceil(x1 / max(pixel_size, 1)) * pixel_size,
+            math.ceil(y1 / max(pixel_size, 1)) * pixel_size,
+        )
+        return _normalize_rect(snapped)
+
+    @staticmethod
+    def _build_yatsume_outer_groups(
+        rect: tuple[float, float, float, float],
+        thickness: float,
+    ) -> list[list[tuple[float, float, float, float]]]:
+        x0, y0, x1, y1 = rect
+        width = x1 - x0
+        height = y1 - y0
+        corner = min(width, height) * 0.24
+        x_split_l = x0 + width * 0.48
+        x_split_r = x0 + width * 0.52
+        y_split_t = y0 + height * 0.48
+        y_split_b = y0 + height * 0.52
+        return [
+            [(x0, y0, x0 + corner, y0 + thickness), (x0, y0, x0 + thickness, y0 + corner)],
+            [(x1 - corner, y0, x1, y0 + thickness), (x1 - thickness, y0, x1, y0 + corner)],
+            [(x1 - thickness, y1 - corner, x1, y1), (x1 - corner, y1 - thickness, x1, y1)],
+            [(x0, y1 - corner, x0 + thickness, y1), (x0, y1 - thickness, x0 + corner, y1)],
+            [(x0 + corner, y0, x_split_l, y0 + thickness)],
+            [(x_split_r, y0, x1 - corner, y0 + thickness)],
+            [(x1 - thickness, y0 + corner, x1, y_split_t)],
+            [(x1 - thickness, y_split_b, x1, y1 - corner)],
+            [(x_split_r, y1 - thickness, x1 - corner, y1)],
+            [(x0 + corner, y1 - thickness, x_split_l, y1)],
+            [(x0, y_split_b, x0 + thickness, y1 - corner)],
+            [(x0, y0 + corner, x0 + thickness, y_split_t)],
+        ]
+
+    @staticmethod
+    def _build_yatsume_hihat_groups(
+        center_x: float,
+        center_y: float,
+        base_size: float,
+        thickness: float,
+    ) -> list[list[tuple[float, float, float, float]]]:
+        rail_width = max(thickness * 1.35, base_size * 0.085)
+        rail_height = base_size * 0.96
+        rail_offset = base_size * 0.61
+        segment_gap = max(thickness * 0.55, base_size * 0.018)
+        segment_height = (rail_height - segment_gap * 4.0) / 5.0
+        top_y = center_y - rail_height / 2.0
+        cap_width = rail_width * 0.76
+        segment_groups: list[list[tuple[float, float, float, float]]] = []
+        for segment_index in range(5):
+            y0 = top_y + segment_index * (segment_height + segment_gap)
+            y1 = y0 + segment_height
+            segment_pair: list[tuple[float, float, float, float]] = []
+            for direction in (-1.0, 1.0):
+                rail_center_x = center_x + direction * rail_offset
+                segment_pair.append(
+                    (
+                        rail_center_x - rail_width / 2.0,
+                        y0,
+                        rail_center_x + rail_width / 2.0,
+                        y1,
+                    )
+                )
+            segment_groups.append(segment_pair)
+
+        top_caps: list[tuple[float, float, float, float]] = []
+        bottom_caps: list[tuple[float, float, float, float]] = []
+        for direction in (-1.0, 1.0):
+            rail_center_x = center_x + direction * rail_offset
+            top_caps.append(
+                (
+                    rail_center_x - cap_width / 2.0,
+                    top_y - segment_gap * 0.72,
+                    rail_center_x + cap_width / 2.0,
+                    top_y - segment_gap * 0.18,
+                )
+            )
+            bottom_caps.append(
+                (
+                    rail_center_x - cap_width / 2.0,
+                    top_y + rail_height + segment_gap * 0.18,
+                    rail_center_x + cap_width / 2.0,
+                    top_y + rail_height + segment_gap * 0.72,
+                )
+            )
+
+        return [
+            segment_groups[2],
+            segment_groups[1],
+            segment_groups[3],
+            segment_groups[0],
+            segment_groups[4],
+            top_caps,
+            bottom_caps,
+        ]
+
+    @staticmethod
+    def _build_yatsume_clap_groups(
+        rect: tuple[float, float, float, float],
+        thickness: float,
+    ) -> list[list[tuple[float, float, float, float]]]:
+        x0, y0, x1, y1 = rect
+        width = x1 - x0
+        height = y1 - y0
+        return [
+            [(x0 + width * 0.32, y0, x0 + width * 0.68, y0 + thickness)],
+            [(x1 - thickness, y0 + height * 0.12, x1, y0 + height * 0.46)],
+            [(x1 - thickness, y0 + height * 0.46, x1, y1 - height * 0.12)],
+            [(x0 + width * 0.46, y1 - thickness, x1 - width * 0.12, y1)],
+            [(x0 + width * 0.12, y1 - thickness, x0 + width * 0.54, y1)],
+            [(x0, y0 + height * 0.54, x0 + thickness, y1 - height * 0.12)],
+            [(x0, y0 + height * 0.12, x0 + thickness, y0 + height * 0.54)],
+            [(x0 + width * 0.12, y0, x0 + width * 0.32, y0 + thickness)],
+        ]
+
+    @staticmethod
+    def _build_yatsume_cymbal_groups(
+        rect: tuple[float, float, float, float],
+    ) -> list[list[tuple[float, float, float, float]]]:
+        x0, y0, x1, y1 = rect
+        grid_size = 5
+        cell_width = (x1 - x0) / grid_size
+        cell_height = (y1 - y0) / grid_size
+        center = (grid_size - 1) / 2.0
+        ordered_cells: list[tuple[float, int, float, float, tuple[float, float, float, float]]] = []
+        for row in range(grid_size):
+            for col in range(grid_size):
+                distance = abs(col - center) + abs(row - center)
+                checker_bias = 0 if (row + col) % 2 == 0 else 1
+                ordered_cells.append(
+                    (
+                        distance,
+                        checker_bias,
+                        abs(row - center),
+                        abs(col - center),
+                        (
+                            x0 + col * cell_width,
+                            y0 + row * cell_height,
+                            x0 + (col + 1) * cell_width,
+                            y0 + (row + 1) * cell_height,
+                        ),
+                    )
+                )
+
+        ordered_cells.sort(key=lambda item: (item[0], item[1], item[2] + item[3], item[2], item[3]))
+        return [[cell[-1]] for cell in ordered_cells]
 
     @staticmethod
     def _overlay_scale(width: float, height: float) -> float:
