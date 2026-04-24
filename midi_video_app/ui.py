@@ -191,6 +191,7 @@ class MidiVideoApp:
         self.yatsume_size_var = tk.DoubleVar(value=self.render_settings.yatsume_size * 100.0)
         self.yatsume_duration_var = tk.DoubleVar(value=self.render_settings.yatsume_duration_sec * 100.0)
         self.yatsume_outline_width_var = tk.DoubleVar(value=self.render_settings.yatsume_outline_width * 100.0)
+        self.yatsume_seek_var = tk.DoubleVar(value=0.0)
         self.show_midi_notes_var = tk.BooleanVar(value=self.render_settings.show_midi_notes)
         self.mad_image_enabled_var = tk.BooleanVar(value=self.render_settings.mad_image_enabled)
         self.mad_image_alternate_flip_var = tk.BooleanVar(value=self.render_settings.mad_image_alternate_flip)
@@ -239,6 +240,7 @@ class MidiVideoApp:
         self.yatsume_size_text_var = tk.StringVar()
         self.yatsume_duration_text_var = tk.StringVar()
         self.yatsume_outline_width_text_var = tk.StringVar()
+        self.yatsume_seek_time_var = tk.StringVar(value="00:00.000 / 00:00.000")
         self.mad_image_size_text_var = tk.StringVar()
         self.mad_image_duration_text_var = tk.StringVar()
         self.mad_image_opacity_text_var = tk.StringVar()
@@ -272,6 +274,10 @@ class MidiVideoApp:
         self._yatsume_note_label_to_value: dict[str, int] = {}
         self._yatsume_note_value_to_label: dict[int, str] = {}
         self._yatsume_piano_rows: list[tuple[float, float, int]] = []
+        self._yatsume_roll_left = 0.0
+        self._yatsume_roll_right = 0.0
+        self._yatsume_roll_top = 0.0
+        self._yatsume_roll_bottom = 0.0
         self._yatsume_note_var_by_role: dict[str, tk.StringVar] = {
             "kick": self.yatsume_kick_note_var,
             "hihat": self.yatsume_hihat_note_var,
@@ -949,7 +955,7 @@ class MidiVideoApp:
         row += 1
         ttk.Label(
             panel,
-            text="上が高いキー、下が低いキーです。濃い色が現在の割り当てで、横線はノーツの並びです。クリックすると選択中の役割へそのキーをセットします。",
+            text="上が高いキー、下が低いキーです。左のラベル列をクリックすると選択中の役割へそのキーをセットし、右のノーツ列をクリックするとその時間へプレビュー移動できます。",
             style="Muted.TLabel",
             wraplength=340,
             justify="left",
@@ -968,7 +974,24 @@ class MidiVideoApp:
         self.yatsume_piano_roll.grid(row=row, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
         panel.rowconfigure(row, weight=1)
         self.yatsume_piano_roll.bind("<Button-1>", self._on_yatsume_piano_roll_clicked)
+        self.yatsume_piano_roll.bind("<B1-Motion>", self._on_yatsume_piano_roll_dragged)
         self.yatsume_piano_roll.bind("<Configure>", lambda _event: self._refresh_yatsume_piano_roll())
+
+        row += 1
+        seek_row = ttk.Frame(panel)
+        seek_row.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        seek_row.columnconfigure(1, weight=1)
+        ttk.Label(seek_row, text="プレビュー移動").grid(row=0, column=0, sticky="w")
+        ttk.Label(seek_row, textvariable=self.yatsume_seek_time_var, style="Muted.TLabel").grid(row=0, column=2, sticky="e")
+        self.yatsume_seek_scale = ttk.Scale(
+            seek_row,
+            from_=0.0,
+            to=1.0,
+            variable=self.yatsume_seek_var,
+            orient="horizontal",
+            command=self._on_yatsume_seek_changed,
+        )
+        self.yatsume_seek_scale.grid(row=0, column=1, sticky="ew", padx=(10, 10))
 
         for label, variable, text_variable, minimum, maximum in (
             ("図形サイズ", self.yatsume_size_var, self.yatsume_size_text_var, 5, 120),
@@ -1268,6 +1291,8 @@ class MidiVideoApp:
         self.current_time_sec = 0.0
         self.playing = False
         self.timeline.configure(to=max(self.project.duration_sec, 0.001))
+        if hasattr(self, "yatsume_seek_scale"):
+            self.yatsume_seek_scale.configure(to=max(self.project.duration_sec, 0.001))
         self._refresh_path_labels()
         self._refresh_yatsume_note_choices()
         self._sync_yatsume_note_controls_from_settings()
@@ -1504,6 +1529,29 @@ class MidiVideoApp:
             return
         self._set_yatsume_role_note(role, note_number)
 
+    def _seek_preview_to_time(self, time_sec: float) -> None:
+        if not self.project:
+            return
+        self.current_time_sec = max(0.0, min(time_sec, self.project.duration_sec))
+        self.playing = False
+        self.playback_origin_sec = self.current_time_sec
+        self._stop_audio_preview()
+        self._refresh_preview()
+
+    def _seek_preview_to_ratio(self, ratio: float) -> None:
+        if not self.project:
+            return
+        self._seek_preview_to_time(self.project.duration_sec * max(0.0, min(1.0, ratio)))
+
+    def _on_yatsume_seek_changed(self, raw_value: str) -> None:
+        if self._slider_updating or not self.project:
+            return
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            return
+        self._seek_preview_to_time(value)
+
     def _refresh_yatsume_piano_roll(self) -> None:
         if not hasattr(self, "yatsume_piano_roll"):
             return
@@ -1512,6 +1560,10 @@ class MidiVideoApp:
         canvas.delete("all")
         width = max(320, int(canvas.winfo_width() or 360))
         height = max(170, int(canvas.winfo_height() or 230))
+        self._yatsume_roll_left = 0.0
+        self._yatsume_roll_right = 0.0
+        self._yatsume_roll_top = 0.0
+        self._yatsume_roll_bottom = 0.0
 
         if not self.project:
             canvas.create_text(
@@ -1544,6 +1596,10 @@ class MidiVideoApp:
         roll_left = label_width + 10
         roll_right = width - 10
         roll_width = max(1, roll_right - roll_left)
+        self._yatsume_roll_left = roll_left
+        self._yatsume_roll_right = roll_right
+        self._yatsume_roll_top = top_padding - 2
+        self._yatsume_roll_bottom = height - bottom_padding
         row_height = max(14.0, min(32.0, (height - top_padding - bottom_padding) / max(1, len(ordered_notes))))
         role_colors = {
             "kick": "#ff9b72",
@@ -1611,12 +1667,21 @@ class MidiVideoApp:
         canvas.create_rectangle(roll_left, top_padding - 2, roll_right, height - bottom_padding, outline="#2a3747", width=1)
 
     def _on_yatsume_piano_roll_clicked(self, event) -> None:
+        if self._yatsume_roll_left <= event.x <= self._yatsume_roll_right:
+            roll_width = max(1.0, self._yatsume_roll_right - self._yatsume_roll_left)
+            self._seek_preview_to_ratio((event.x - self._yatsume_roll_left) / roll_width)
+            return
         for y0, y1, note_number in self._yatsume_piano_rows:
             if y0 <= event.y <= y1:
                 role = self.yatsume_assign_role_var.get()
                 if role in self._yatsume_field_by_role:
                     self._set_yatsume_role_note(role, note_number)
                 return
+
+    def _on_yatsume_piano_roll_dragged(self, event) -> None:
+        if self._yatsume_roll_left <= event.x <= self._yatsume_roll_right:
+            roll_width = max(1.0, self._yatsume_roll_right - self._yatsume_roll_left)
+            self._seek_preview_to_ratio((event.x - self._yatsume_roll_left) / roll_width)
 
     def _get_preview_dimensions(self) -> tuple[int, int]:
         width, height = self._selected_export_dimensions()
@@ -2210,6 +2275,7 @@ class MidiVideoApp:
             self.preview_label.configure(image="")
             self._refresh_yatsume_piano_roll()
             self.time_var.set("00:00.000 / 00:00.000")
+            self.yatsume_seek_time_var.set("00:00.000 / 00:00.000")
             self.measure_var.set("小節: -")
             return
 
@@ -2220,10 +2286,12 @@ class MidiVideoApp:
 
         self._slider_updating = True
         self.timeline.set(self.current_time_sec)
+        self.yatsume_seek_var.set(self.current_time_sec)
         self._slider_updating = False
 
         total_time = self._format_time(self.project.duration_sec)
         current_time = self._format_time(self.current_time_sec)
+        self.yatsume_seek_time_var.set(f"{current_time} / {total_time}")
         current_measure = self.renderer.get_measure_for_time(self.current_time_sec)
         self.time_var.set(f"{current_time} / {total_time}")
         self.measure_var.set(
