@@ -282,6 +282,16 @@ class ProjectRenderer:
         self._measure_segments = self._build_measure_segments(project)
         self._note_start_seconds = [note.start_sec for note in project.notes]
         self._chord_start_seconds = [chord.start_sec for chord in project.chords]
+        drum_source_notes = [note for note in project.notes if note.channel == 9]
+        if not drum_source_notes:
+            drum_source_notes = list(project.notes)
+        self._yatsume_source_notes = drum_source_notes
+        self._yatsume_note_start_seconds: dict[int, tuple[float, ...]] = {}
+        note_starts_by_pitch: dict[int, list[float]] = {}
+        for note in drum_source_notes:
+            note_starts_by_pitch.setdefault(note.note, []).append(note.start_sec)
+        for note_number, starts in note_starts_by_pitch.items():
+            self._yatsume_note_start_seconds[note_number] = tuple(starts)
         self._measure_render_cache: dict[
             tuple[int, int, int, tuple[object, ...]],
             tuple[Image.Image, tuple[_PreparedSegment, ...]],
@@ -322,6 +332,7 @@ class ProjectRenderer:
         if not getattr(self.settings, "show_midi_notes", True):
             image = Image.new("RGBA", (width, height), self._background_fill())
             self._draw_mad_image_overlays(image, clamped_time, width, height)
+            self._draw_yatsume_overlays(image, clamped_time, width, height)
             return self._finalize_frame(image, width, height)
 
         settings = self.settings
@@ -409,6 +420,7 @@ class ProjectRenderer:
 
         draw.flush()
         self._draw_mad_image_overlays(image, clamped_time, width, height)
+        self._draw_yatsume_overlays(image, clamped_time, width, height)
         return self._finalize_frame(image, width, height)
 
     def _render_performance_frame(self, clamped_time: float, width: int, height: int) -> Image.Image:
@@ -575,6 +587,7 @@ class ProjectRenderer:
 
         draw.flush()
         self._draw_mad_image_overlays(image, clamped_time, width, height)
+        self._draw_yatsume_overlays(image, clamped_time, width, height)
 
         if show_midi_notes and self.settings.show_playhead:
             self._draw_playhead(
@@ -1273,6 +1286,131 @@ class ProjectRenderer:
         center_x = canvas_width * _clamp(float(getattr(self.settings, "mad_image_position_x", 0.5))) + offset_x
         center_y = canvas_height * _clamp(float(getattr(self.settings, "mad_image_position_y", 0.5))) + offset_y
         return sprite, center_x, center_y
+
+    def _draw_yatsume_overlays(self, image: Image.Image, time_sec: float, width: int, height: int) -> None:
+        if not getattr(self.settings, "yatsume_enabled", False):
+            return
+
+        duration = max(0.03, float(getattr(self.settings, "yatsume_duration_sec", 0.22)))
+        kick_strength = self._yatsume_hit_strength(getattr(self.settings, "yatsume_kick_note", 36), time_sec, duration)
+        hihat_strength = self._yatsume_hit_strength(getattr(self.settings, "yatsume_hihat_note", 42), time_sec, duration)
+        clap_strength = self._yatsume_hit_strength(getattr(self.settings, "yatsume_clap_note", 39), time_sec, duration)
+        cymbal_strength = self._yatsume_hit_strength(getattr(self.settings, "yatsume_cymbal_note", 49), time_sec, duration)
+
+        if max(kick_strength, hihat_strength, clap_strength, cymbal_strength) <= 0.0:
+            return
+
+        draw = ImageDraw.Draw(image, "RGBA")
+        center_x = width / 2.0
+        center_y = height / 2.0
+        base_size = max(12.0, min(width, height) * max(0.05, float(getattr(self.settings, "yatsume_size", 0.3))))
+        line_width = max(1, int(round(base_size * 0.028 * max(0.1, float(getattr(self.settings, "yatsume_outline_width", 1.0))))))
+        rail_width = max(4.0, base_size * 0.1)
+        rail_height = base_size * 0.96
+        rail_gap = base_size * 0.17
+        rail_offset = base_size * 0.61
+        outer_rect = (
+            center_x - base_size / 2.0,
+            center_y - base_size / 2.0,
+            center_x + base_size / 2.0,
+            center_y + base_size / 2.0,
+        )
+        clap_size = base_size * 0.58
+        clap_rect = (
+            center_x - clap_size / 2.0,
+            center_y - clap_size / 2.0,
+            center_x + clap_size / 2.0,
+            center_y + clap_size / 2.0,
+        )
+        cymbal_size = base_size * 0.24
+        cymbal_rect = (
+            center_x - cymbal_size / 2.0,
+            center_y - cymbal_size / 2.0,
+            center_x + cymbal_size / 2.0,
+            center_y + cymbal_size / 2.0,
+        )
+
+        outline_color = getattr(self.settings, "yatsume_outline_color", "#ffffff")
+        fill_color = getattr(self.settings, "yatsume_fill_color", "#ffffff")
+
+        if kick_strength > 0.0:
+            draw.rectangle(
+                _normalize_rect(outer_rect),
+                outline=_with_alpha(outline_color, int(255 * kick_strength)),
+                width=line_width,
+            )
+
+        if hihat_strength > 0.0:
+            segment_gap = max(3.0, rail_height * 0.03)
+            segment_height = (rail_height - segment_gap * 4.0) / 5.0
+            rail_fill = _with_alpha(outline_color, int(255 * hihat_strength))
+            top_y = center_y - rail_height / 2.0
+            for rail_direction in (-1.0, 1.0):
+                rail_center_x = center_x + rail_direction * rail_offset
+                x0 = rail_center_x - rail_width / 2.0
+                x1 = rail_center_x + rail_width / 2.0
+                for segment_index in range(5):
+                    y0 = top_y + segment_index * (segment_height + segment_gap)
+                    y1 = y0 + segment_height
+                    draw.rectangle(_normalize_rect((x0, y0, x1, y1)), fill=rail_fill)
+                cap_width = rail_width * 0.7
+                draw.rectangle(
+                    _normalize_rect((rail_center_x - cap_width / 2.0, top_y - segment_gap * 0.7, rail_center_x + cap_width / 2.0, top_y - segment_gap * 0.18)),
+                    fill=rail_fill,
+                )
+                draw.rectangle(
+                    _normalize_rect((rail_center_x - cap_width / 2.0, top_y + rail_height + segment_gap * 0.18, rail_center_x + cap_width / 2.0, top_y + rail_height + segment_gap * 0.7)),
+                    fill=rail_fill,
+                )
+                if kick_strength > 0.0:
+                    bridge_alpha = int(86 * max(kick_strength, hihat_strength))
+                    draw.line(
+                        (
+                            rail_center_x - rail_direction * rail_gap,
+                            center_y,
+                            center_x + rail_direction * (base_size / 2.0 + rail_gap * 0.2),
+                            center_y,
+                        ),
+                        fill=_with_alpha(outline_color, bridge_alpha),
+                        width=max(1, line_width // 2),
+                    )
+
+        if clap_strength > 0.0:
+            draw.rectangle(
+                _normalize_rect(clap_rect),
+                outline=_with_alpha(outline_color, int(255 * clap_strength)),
+                width=max(1, int(round(line_width * 0.9))),
+            )
+
+        if cymbal_strength > 0.0:
+            draw.rectangle(
+                _normalize_rect(cymbal_rect),
+                fill=_with_alpha(fill_color, int(255 * cymbal_strength)),
+            )
+
+    def _yatsume_hit_strength(self, note_number: int, time_sec: float, duration_sec: float) -> float:
+        starts = self._yatsume_note_start_seconds.get(int(note_number))
+        if not starts:
+            return 0.0
+
+        index = bisect_right(starts, time_sec + 1e-9) - 1
+        if index < 0:
+            return 0.0
+
+        strongest = 0.0
+        while index >= 0:
+            elapsed = time_sec - starts[index]
+            if elapsed < 0.0:
+                index -= 1
+                continue
+            if elapsed > duration_sec:
+                break
+            fade = 1.0 - _clamp(elapsed / max(duration_sec, 1e-6))
+            strength = fade * fade
+            if strength > strongest:
+                strongest = strength
+            index -= 1
+        return strongest
 
     @staticmethod
     def _overlay_scale(width: float, height: float) -> float:

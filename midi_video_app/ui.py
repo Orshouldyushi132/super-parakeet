@@ -182,6 +182,15 @@ class MidiVideoApp:
         self.safe_area_scale_var = tk.DoubleVar(value=self.render_settings.safe_area_scale * 100.0)
         self.canvas_border_enabled_var = tk.BooleanVar(value=self.render_settings.canvas_border_enabled)
         self.canvas_border_width_var = tk.DoubleVar(value=self.render_settings.canvas_border_width * 100.0)
+        self.yatsume_enabled_var = tk.BooleanVar(value=self.render_settings.yatsume_enabled)
+        self.yatsume_kick_note_var = tk.StringVar()
+        self.yatsume_hihat_note_var = tk.StringVar()
+        self.yatsume_clap_note_var = tk.StringVar()
+        self.yatsume_cymbal_note_var = tk.StringVar()
+        self.yatsume_assign_role_var = tk.StringVar(value="kick")
+        self.yatsume_size_var = tk.DoubleVar(value=self.render_settings.yatsume_size * 100.0)
+        self.yatsume_duration_var = tk.DoubleVar(value=self.render_settings.yatsume_duration_sec * 100.0)
+        self.yatsume_outline_width_var = tk.DoubleVar(value=self.render_settings.yatsume_outline_width * 100.0)
         self.show_midi_notes_var = tk.BooleanVar(value=self.render_settings.show_midi_notes)
         self.mad_image_enabled_var = tk.BooleanVar(value=self.render_settings.mad_image_enabled)
         self.mad_image_alternate_flip_var = tk.BooleanVar(value=self.render_settings.mad_image_alternate_flip)
@@ -227,6 +236,9 @@ class MidiVideoApp:
         self.lyrics_space_scale_text_var = tk.StringVar()
         self.safe_area_scale_text_var = tk.StringVar()
         self.canvas_border_width_text_var = tk.StringVar()
+        self.yatsume_size_text_var = tk.StringVar()
+        self.yatsume_duration_text_var = tk.StringVar()
+        self.yatsume_outline_width_text_var = tk.StringVar()
         self.mad_image_size_text_var = tk.StringVar()
         self.mad_image_duration_text_var = tk.StringVar()
         self.mad_image_opacity_text_var = tk.StringVar()
@@ -257,6 +269,23 @@ class MidiVideoApp:
             "text_color": "文字色",
             "canvas_border_color": "動画範囲の枠色",
         }
+        self._yatsume_note_label_to_value: dict[str, int] = {}
+        self._yatsume_note_value_to_label: dict[int, str] = {}
+        self._yatsume_piano_rows: list[tuple[float, float, int]] = []
+        self._yatsume_note_var_by_role: dict[str, tk.StringVar] = {
+            "kick": self.yatsume_kick_note_var,
+            "hihat": self.yatsume_hihat_note_var,
+            "clap": self.yatsume_clap_note_var,
+            "cymbal": self.yatsume_cymbal_note_var,
+        }
+        self._yatsume_field_by_role: dict[str, str] = {
+            "kick": "yatsume_kick_note",
+            "hihat": "yatsume_hihat_note",
+            "clap": "yatsume_clap_note",
+            "cymbal": "yatsume_cymbal_note",
+        }
+        self._color_labels["yatsume_outline_color"] = "ヤツメ穴の枠色"
+        self._color_labels["yatsume_fill_color"] = "ヤツメ穴の内側色"
         self._color_value_vars: dict[str, tk.StringVar] = {}
         self._color_swatches: dict[str, tk.Label] = {}
 
@@ -385,8 +414,10 @@ class MidiVideoApp:
         color_tab = ttk.Frame(notebook, padding=12)
         effect_tab = ttk.Frame(notebook, padding=12)
         mad_tab = ttk.Frame(notebook, padding=12)
+        yatsume_tab = ttk.Frame(notebook, padding=12)
         detail_tab = ttk.Frame(notebook, padding=12)
         export_tab = ttk.Frame(notebook, padding=12)
+        notebook.add(yatsume_tab, text="ヤツメ穴")
 
         notebook.add(basic_tab, text="基本")
         notebook.add(color_tab, text="色")
@@ -399,8 +430,10 @@ class MidiVideoApp:
         self._build_color_settings_tab(color_tab)
         self._build_effect_settings_tab(effect_tab)
         self._build_mad_settings_tab(mad_tab)
+        self._build_yatsume_settings_tab(yatsume_tab)
         self._build_detail_settings_tab(detail_tab)
         self._build_export_settings_tab(export_tab)
+        notebook.insert(4, yatsume_tab)
 
     def _build_basic_settings_tab(self, panel: ttk.Frame) -> None:
         row = 0
@@ -668,6 +701,8 @@ class MidiVideoApp:
             "outline_color",
             "text_color",
             "canvas_border_color",
+            "yatsume_outline_color",
+            "yatsume_fill_color",
         ):
             self._add_color_control(panel, row, field_name)
             row += 1
@@ -849,6 +884,96 @@ class MidiVideoApp:
             ("不透明度", self.mad_image_opacity_var, self.mad_image_opacity_text_var, 0, 100),
             ("横位置", self.mad_image_position_x_var, self.mad_image_position_x_text_var, 0, 100),
             ("縦位置", self.mad_image_position_y_var, self.mad_image_position_y_text_var, 0, 100),
+        ):
+            row += 1
+            self._add_slider_control(
+                panel,
+                row,
+                label,
+                variable,
+                text_variable,
+                minimum,
+                maximum,
+                self._on_strength_changed,
+            )
+
+    def _build_yatsume_settings_tab(self, panel: ttk.Frame) -> None:
+        row = 0
+        panel.columnconfigure(1, weight=1)
+        panel.columnconfigure(2, weight=1)
+
+        ttk.Label(
+            panel,
+            text="ドラムMIDIの発音に合わせて中央へ図形を重ねます。キック・ハイハット・クラップ・シンバルの担当キーは、下のピアノロールを見ながら感覚的に選べます。",
+            wraplength=340,
+            justify="left",
+        ).grid(row=row, column=0, columnspan=4, sticky="w")
+
+        row += 1
+        ttk.Checkbutton(
+            panel,
+            text="ヤツメ穴を使う",
+            variable=self.yatsume_enabled_var,
+            command=self._on_toggle_changed,
+        ).grid(row=row, column=0, columnspan=4, sticky="w", pady=(10, 0))
+
+        note_rows = (
+            ("キック", "kick", self.yatsume_kick_note_var),
+            ("ハイハット", "hihat", self.yatsume_hihat_note_var),
+            ("クラップ", "clap", self.yatsume_clap_note_var),
+            ("シンバル", "cymbal", self.yatsume_cymbal_note_var),
+        )
+        self._yatsume_note_combos: dict[str, ttk.Combobox] = {}
+        for role_label, role_key, variable in note_rows:
+            row += 1
+            ttk.Label(panel, text=f"{role_label}のキー").grid(row=row, column=0, sticky="w", pady=(8, 0))
+            combo = ttk.Combobox(panel, state="readonly", textvariable=variable, width=24)
+            combo.grid(row=row, column=1, columnspan=3, sticky="ew", pady=(8, 0))
+            combo.bind("<<ComboboxSelected>>", lambda _event, role=role_key: self._on_yatsume_note_selected(role))
+            self._yatsume_note_combos[role_key] = combo
+
+        row += 1
+        ttk.Label(panel, text="ピアノロールをクリックしたときの割り当て先").grid(row=row, column=0, columnspan=4, sticky="w", pady=(12, 0))
+
+        row += 1
+        role_frame = ttk.Frame(panel)
+        role_frame.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(6, 0))
+        for index, (role_label, role_key, _variable) in enumerate(note_rows):
+            ttk.Radiobutton(role_frame, text=role_label, value=role_key, variable=self.yatsume_assign_role_var).grid(
+                row=0,
+                column=index,
+                sticky="w",
+                padx=(0 if index == 0 else 10, 0),
+            )
+
+        row += 1
+        ttk.Label(
+            panel,
+            text="上が高いキー、下が低いキーです。濃い色が現在の割り当てで、横線はノーツの並びです。クリックすると選択中の役割へそのキーをセットします。",
+            style="Muted.TLabel",
+            wraplength=340,
+            justify="left",
+        ).grid(row=row, column=0, columnspan=4, sticky="w", pady=(10, 0))
+
+        row += 1
+        self.yatsume_piano_roll = tk.Canvas(
+            panel,
+            width=360,
+            height=230,
+            background="#081018",
+            highlightthickness=1,
+            highlightbackground="#263446",
+            bd=0,
+        )
+        self.yatsume_piano_roll.grid(row=row, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
+        panel.rowconfigure(row, weight=1)
+        self.yatsume_piano_roll.bind("<Button-1>", self._on_yatsume_piano_roll_clicked)
+        self.yatsume_piano_roll.bind("<Configure>", lambda _event: self._refresh_yatsume_piano_roll())
+
+        for label, variable, text_variable, minimum, maximum in (
+            ("図形サイズ", self.yatsume_size_var, self.yatsume_size_text_var, 5, 120),
+            ("表示時間", self.yatsume_duration_var, self.yatsume_duration_text_var, 3, 300),
+            ("枠の太さ", self.yatsume_outline_width_var, self.yatsume_outline_width_text_var, 10, 500),
         ):
             row += 1
             self._add_slider_control(
@@ -1144,6 +1269,8 @@ class MidiVideoApp:
         self.playing = False
         self.timeline.configure(to=max(self.project.duration_sec, 0.001))
         self._refresh_path_labels()
+        self._refresh_yatsume_note_choices()
+        self._sync_yatsume_note_controls_from_settings()
         self.status_var.set("MIDIを読み込みました。小節ごとの切り替え表示でプレビューできます。")
         self.progress.configure(value=0.0)
         self._refresh_preview()
@@ -1273,6 +1400,223 @@ class MidiVideoApp:
             hidden_text="選択済み",
         )
         self.mad_image_path_var.set(f"音MAD画像: {image_display}")
+
+    @staticmethod
+    def _midi_note_name(note_number: int) -> str:
+        note_names = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+        octave = note_number // 12 - 1
+        return f"{note_names[note_number % 12]}{octave}"
+
+    @staticmethod
+    def _gm_drum_name(note_number: int) -> str:
+        drum_names = {
+            35: "Acoustic Bass Drum",
+            36: "Bass Drum",
+            37: "Side Stick",
+            38: "Snare",
+            39: "Hand Clap",
+            40: "Electric Snare",
+            41: "Low Floor Tom",
+            42: "Closed Hi-Hat",
+            43: "High Floor Tom",
+            44: "Pedal Hi-Hat",
+            45: "Low Tom",
+            46: "Open Hi-Hat",
+            47: "Low-Mid Tom",
+            48: "Hi-Mid Tom",
+            49: "Crash Cymbal",
+            50: "High Tom",
+            51: "Ride Cymbal",
+            52: "Chinese Cymbal",
+            53: "Ride Bell",
+            55: "Splash Cymbal",
+            57: "Crash Cymbal 2",
+            59: "Ride Cymbal 2",
+        }
+        return drum_names.get(note_number, "Drum Note")
+
+    def _drum_source_notes(self):
+        if not self.project:
+            return []
+        drum_notes = [note for note in self.project.notes if note.channel == 9]
+        return drum_notes if drum_notes else list(self.project.notes)
+
+    def _format_yatsume_note_label(self, note_number: int, hit_count: int | None = None) -> str:
+        suffix = f" / 発音{hit_count}回" if hit_count is not None else ""
+        return f"{note_number:03d} | {self._midi_note_name(note_number)} | {self._gm_drum_name(note_number)}{suffix}"
+
+    def _refresh_yatsume_note_choices(self) -> None:
+        counts_by_note: dict[int, int] = {}
+        for note in self._drum_source_notes():
+            counts_by_note[note.note] = counts_by_note.get(note.note, 0) + 1
+
+        candidate_notes = sorted(set(counts_by_note) | {36, 42, 39, 49})
+        self._yatsume_note_label_to_value = {}
+        self._yatsume_note_value_to_label = {}
+        labels: list[str] = []
+        for note_number in candidate_notes:
+            label = self._format_yatsume_note_label(note_number, counts_by_note.get(note_number))
+            labels.append(label)
+            self._yatsume_note_label_to_value[label] = note_number
+            self._yatsume_note_value_to_label[note_number] = label
+
+        for combo in getattr(self, "_yatsume_note_combos", {}).values():
+            combo.configure(values=labels)
+
+    def _sync_yatsume_note_controls_from_settings(self) -> None:
+        if not self._yatsume_note_value_to_label:
+            self._refresh_yatsume_note_choices()
+
+        for role, field_name in self._yatsume_field_by_role.items():
+            note_number = int(getattr(self.render_settings, field_name))
+            label = self._yatsume_note_value_to_label.get(note_number)
+            if label is None:
+                label = self._format_yatsume_note_label(note_number)
+                self._yatsume_note_label_to_value[label] = note_number
+                self._yatsume_note_value_to_label[note_number] = label
+                combo = getattr(self, "_yatsume_note_combos", {}).get(role)
+                if combo is not None:
+                    values = list(combo.cget("values"))
+                    if label not in values:
+                        values.append(label)
+                        combo.configure(values=values)
+            self._yatsume_note_var_by_role[role].set(label)
+
+    def _set_yatsume_role_note(self, role: str, note_number: int, *, refresh_preview: bool = True) -> None:
+        field_name = self._yatsume_field_by_role[role]
+        setattr(self.render_settings, field_name, int(note_number))
+        label = self._yatsume_note_value_to_label.get(int(note_number), self._format_yatsume_note_label(int(note_number)))
+        self._yatsume_note_var_by_role[role].set(label)
+        if self.renderer:
+            self.renderer.set_settings(self.render_settings)
+        self.theme_var.set(CUSTOM_THEME_NAME)
+        self.preset_name_var.set("")
+        self._refresh_yatsume_piano_roll()
+        if refresh_preview:
+            self._refresh_preview_if_loaded()
+
+    def _on_yatsume_note_selected(self, role: str) -> None:
+        if self._updating_style_controls:
+            return
+        label = self._yatsume_note_var_by_role[role].get()
+        note_number = self._yatsume_note_label_to_value.get(label)
+        if note_number is None:
+            return
+        self._set_yatsume_role_note(role, note_number)
+
+    def _refresh_yatsume_piano_roll(self) -> None:
+        if not hasattr(self, "yatsume_piano_roll"):
+            return
+
+        canvas = self.yatsume_piano_roll
+        canvas.delete("all")
+        width = max(320, int(canvas.winfo_width() or 360))
+        height = max(170, int(canvas.winfo_height() or 230))
+
+        if not self.project:
+            canvas.create_text(
+                width / 2.0,
+                height / 2.0,
+                text="MIDIを開くと、ここにドラムのピアノロールが表示されます。",
+                fill="#9eb0c6",
+                font=("Yu Gothic UI", 10),
+            )
+            return
+
+        drum_notes = self._drum_source_notes()
+        if not drum_notes:
+            canvas.create_text(
+                width / 2.0,
+                height / 2.0,
+                text="このMIDIには表示できるノーツがありません。",
+                fill="#9eb0c6",
+                font=("Yu Gothic UI", 10),
+            )
+            return
+
+        notes_by_pitch: dict[int, list] = {}
+        for note in drum_notes:
+            notes_by_pitch.setdefault(note.note, []).append(note)
+        ordered_notes = sorted(notes_by_pitch.keys(), reverse=True)
+        label_width = 154
+        top_padding = 20
+        bottom_padding = 10
+        roll_left = label_width + 10
+        roll_right = width - 10
+        roll_width = max(1, roll_right - roll_left)
+        row_height = max(14.0, min(32.0, (height - top_padding - bottom_padding) / max(1, len(ordered_notes))))
+        role_colors = {
+            "kick": "#ff9b72",
+            "hihat": "#93c5fd",
+            "clap": "#f9a8d4",
+            "cymbal": "#fde68a",
+        }
+        role_note_numbers = {
+            role: int(getattr(self.render_settings, field_name))
+            for role, field_name in self._yatsume_field_by_role.items()
+        }
+        duration = max(self.project.duration_sec, 0.001)
+        self._yatsume_piano_rows = []
+
+        canvas.create_rectangle(0, 0, width, height, fill="#081018", outline="")
+        role_names = {
+            "kick": "キック",
+            "hihat": "ハイハット",
+            "clap": "クラップ",
+            "cymbal": "シンバル",
+        }
+        canvas.create_text(
+            10,
+            6,
+            anchor="nw",
+            text=f"クリック先: {role_names.get(self.yatsume_assign_role_var.get(), self.yatsume_assign_role_var.get())}",
+            fill="#f5f7fb",
+            font=("Yu Gothic UI Semibold", 10),
+        )
+
+        for row_index, note_number in enumerate(ordered_notes):
+            y0 = top_padding + row_index * row_height
+            y1 = y0 + row_height - 2
+            assigned_roles = [role for role, mapped_note in role_note_numbers.items() if mapped_note == note_number]
+            row_fill = "#101822"
+            outline = "#1d2a38"
+            if assigned_roles:
+                row_fill = "#152232"
+                outline = role_colors[assigned_roles[0]]
+            canvas.create_rectangle(0, y0, width, y1, fill=row_fill, outline=outline)
+            label_color = role_colors[assigned_roles[0]] if assigned_roles else "#d7dee8"
+            canvas.create_text(
+                10,
+                (y0 + y1) / 2.0,
+                anchor="w",
+                text=self._format_yatsume_note_label(note_number, len(notes_by_pitch[note_number])),
+                fill=label_color,
+                font=("Yu Gothic UI", 9),
+            )
+            self._yatsume_piano_rows.append((y0, y1, note_number))
+
+            for note in notes_by_pitch[note_number]:
+                x0 = roll_left + (note.start_sec / duration) * roll_width
+                note_duration = max(0.025, note.end_sec - note.start_sec)
+                x1 = roll_left + min(1.0, (note.start_sec + note_duration) / duration) * roll_width
+                if x1 - x0 < 2:
+                    x1 = x0 + 2
+                fill = "#49596c"
+                if assigned_roles:
+                    fill = role_colors[assigned_roles[0]]
+                canvas.create_rectangle(x0, y0 + 3, x1, y1 - 3, fill=fill, outline="")
+
+        current_x = roll_left + (max(0.0, min(self.current_time_sec, duration)) / duration) * roll_width
+        canvas.create_line(current_x, top_padding - 2, current_x, height - bottom_padding, fill="#ffffff", width=1)
+        canvas.create_rectangle(roll_left, top_padding - 2, roll_right, height - bottom_padding, outline="#2a3747", width=1)
+
+    def _on_yatsume_piano_roll_clicked(self, event) -> None:
+        for y0, y1, note_number in self._yatsume_piano_rows:
+            if y0 <= event.y <= y1:
+                role = self.yatsume_assign_role_var.get()
+                if role in self._yatsume_field_by_role:
+                    self._set_yatsume_role_note(role, note_number)
+                return
 
     def _get_preview_dimensions(self) -> tuple[int, int]:
         width, height = self._selected_export_dimensions()
@@ -1665,6 +2009,7 @@ class MidiVideoApp:
         self.render_settings.transparent_background = bool(self.transparent_background_var.get())
         self.render_settings.safe_area_enabled = bool(self.safe_area_enabled_var.get())
         self.render_settings.canvas_border_enabled = bool(self.canvas_border_enabled_var.get())
+        self.render_settings.yatsume_enabled = bool(self.yatsume_enabled_var.get())
         self.render_settings.show_midi_notes = bool(self.show_midi_notes_var.get())
         self.render_settings.mad_image_enabled = bool(self.mad_image_enabled_var.get())
         self.render_settings.mad_image_alternate_flip = bool(self.mad_image_alternate_flip_var.get())
@@ -1691,6 +2036,9 @@ class MidiVideoApp:
         self.render_settings.lyrics_space_scale = round(self.lyrics_space_scale_var.get() / 100.0, 3)
         self.render_settings.safe_area_scale = round(self.safe_area_scale_var.get() / 100.0, 3)
         self.render_settings.canvas_border_width = round(self.canvas_border_width_var.get() / 100.0, 3)
+        self.render_settings.yatsume_size = round(self.yatsume_size_var.get() / 100.0, 3)
+        self.render_settings.yatsume_duration_sec = round(self.yatsume_duration_var.get() / 100.0, 3)
+        self.render_settings.yatsume_outline_width = round(self.yatsume_outline_width_var.get() / 100.0, 3)
         self.render_settings.mad_image_size = round(self.mad_image_size_var.get() / 100.0, 3)
         self.render_settings.mad_image_duration_sec = round(self.mad_image_duration_var.get() / 100.0, 3)
         self.render_settings.mad_image_opacity = round(self.mad_image_opacity_var.get() / 100.0, 3)
@@ -1745,6 +2093,10 @@ class MidiVideoApp:
         self.safe_area_scale_var.set(self.render_settings.safe_area_scale * 100.0)
         self.canvas_border_enabled_var.set(self.render_settings.canvas_border_enabled)
         self.canvas_border_width_var.set(self.render_settings.canvas_border_width * 100.0)
+        self.yatsume_enabled_var.set(self.render_settings.yatsume_enabled)
+        self.yatsume_size_var.set(self.render_settings.yatsume_size * 100.0)
+        self.yatsume_duration_var.set(self.render_settings.yatsume_duration_sec * 100.0)
+        self.yatsume_outline_width_var.set(self.render_settings.yatsume_outline_width * 100.0)
         self.show_midi_notes_var.set(self.render_settings.show_midi_notes)
         self.mad_image_enabled_var.set(self.render_settings.mad_image_enabled)
         self.mad_image_alternate_flip_var.set(self.render_settings.mad_image_alternate_flip)
@@ -1789,6 +2141,9 @@ class MidiVideoApp:
         self._update_export_option_state()
         self._refresh_custom_font_label()
         self._refresh_mad_image_label()
+        self._refresh_yatsume_note_choices()
+        self._sync_yatsume_note_controls_from_settings()
+        self._refresh_yatsume_piano_roll()
 
         self._updating_style_controls = False
 
@@ -1803,6 +2158,9 @@ class MidiVideoApp:
         self.lyrics_space_scale_text_var.set(f"{self.lyrics_space_scale_var.get():.0f}%")
         self.safe_area_scale_text_var.set(f"{self.safe_area_scale_var.get():.0f}%")
         self.canvas_border_width_text_var.set(f"{self.canvas_border_width_var.get() / 100.0:.2f}x")
+        self.yatsume_size_text_var.set(f"{self.yatsume_size_var.get():.0f}%")
+        self.yatsume_duration_text_var.set(f"{self.yatsume_duration_var.get() / 100.0:.2f}秒")
+        self.yatsume_outline_width_text_var.set(f"{self.yatsume_outline_width_var.get() / 100.0:.2f}x")
         self.mad_image_size_text_var.set(f"{self.mad_image_size_var.get():.0f}%")
         self.mad_image_duration_text_var.set(f"{self.mad_image_duration_var.get() / 100.0:.2f}秒")
         self.mad_image_opacity_text_var.set(f"{self.mad_image_opacity_var.get():.0f}%")
@@ -1850,6 +2208,7 @@ class MidiVideoApp:
     def _refresh_preview(self) -> None:
         if not self.project or not self.renderer:
             self.preview_label.configure(image="")
+            self._refresh_yatsume_piano_roll()
             self.time_var.set("00:00.000 / 00:00.000")
             self.measure_var.set("小節: -")
             return
@@ -1870,6 +2229,8 @@ class MidiVideoApp:
         self.measure_var.set(
             f"現在小節: {current_measure.index + 1} / {self.project.measure_count} ({current_measure.numerator}/{current_measure.denominator})"
         )
+
+        self._refresh_yatsume_piano_roll()
 
     def _update_export_progress(self, progress_value: float, message: str) -> None:
         self.progress.configure(value=progress_value * 100.0)

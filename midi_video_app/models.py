@@ -88,6 +88,16 @@ class RenderSettings:
     safe_area_scale: float = 1.0
     canvas_border_enabled: bool = True
     canvas_border_width: float = 1.0
+    yatsume_enabled: bool = False
+    yatsume_kick_note: int = 36
+    yatsume_hihat_note: int = 42
+    yatsume_clap_note: int = 39
+    yatsume_cymbal_note: int = 49
+    yatsume_outline_color: str = "#ffffff"
+    yatsume_fill_color: str = "#ffffff"
+    yatsume_size: float = 0.3
+    yatsume_duration_sec: float = 0.22
+    yatsume_outline_width: float = 1.0
     show_midi_notes: bool = True
     mad_image_enabled: bool = False
     mad_image_path: str = ""
@@ -457,6 +467,9 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "lyrics_space_scale": (0.0, 3.0),
         "safe_area_scale": (0.0, 2.0),
         "canvas_border_width": (0.0, 5.0),
+        "yatsume_size": (0.05, 1.2),
+        "yatsume_duration_sec": (0.03, 3.0),
+        "yatsume_outline_width": (0.1, 5.0),
         "mad_image_size": (0.05, 2.0),
         "mad_image_duration_sec": (0.03, 5.0),
         "mad_image_opacity": (0.0, 1.0),
@@ -465,11 +478,16 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
     }
     int_ranges = {
         "visible_measure_count": (1, 8),
+        "yatsume_kick_note": (0, 127),
+        "yatsume_hihat_note": (0, 127),
+        "yatsume_clap_note": (0, 127),
+        "yatsume_cymbal_note": (0, 127),
     }
     bool_fields = {
         "transparent_background",
         "safe_area_enabled",
         "canvas_border_enabled",
+        "yatsume_enabled",
         "show_midi_notes",
         "mad_image_enabled",
         "mad_image_alternate_flip",
