@@ -1304,15 +1304,18 @@ class ProjectRenderer:
         center_y = height * _clamp(float(getattr(self.settings, "yatsume_position_y", 0.5)))
         requested_size = max(12.0, min(width, height) * max(0.05, float(getattr(self.settings, "yatsume_size", 0.3))))
         unit = float(max(1, int(round(requested_size / 40.0))))
-        pixel_size = max(1, int(round(unit * 0.5)))
+        pixel_size = max(1, int(round(unit * 0.34)))
         stroke_scale = max(0.02, float(getattr(self.settings, "yatsume_outline_width", 1.0)))
         stroke = max(float(pixel_size), stroke_scale * unit)
+        snap_step = float(max(1, pixel_size))
+        center_x = round(center_x / snap_step) * snap_step
+        center_y = round(center_y / snap_step) * snap_step
         outer_size_units = 34
         outer_size = outer_size_units * unit
         outer_width = outer_size
         outer_height = outer_size
-        outer_x0 = round((center_x - outer_width / 2.0) / unit) * unit
-        outer_y0 = round((center_y - outer_height / 2.0) / unit) * unit
+        outer_x0 = round((center_x - outer_width / 2.0) / snap_step) * snap_step
+        outer_y0 = round((center_y - outer_height / 2.0) / snap_step) * snap_step
         outer_rect = (
             outer_x0,
             outer_y0,
@@ -1321,11 +1324,12 @@ class ProjectRenderer:
         )
         center_x = outer_x0 + outer_width / 2.0
         center_y = outer_y0 + outer_height / 2.0
+        inner_margin_units = (outer_size_units - 20) / 2.0
         clap_rect = (
-            outer_x0 + 6 * unit,
-            outer_y0 + 6 * unit,
-            outer_x0 + 26 * unit,
-            outer_y0 + 26 * unit,
+            outer_x0 + inner_margin_units * unit,
+            outer_y0 + inner_margin_units * unit,
+            outer_x0 + (outer_size_units - inner_margin_units) * unit,
+            outer_y0 + (outer_size_units - inner_margin_units) * unit,
         )
         cymbal_rect = (
             center_x - 3 * unit,
@@ -1438,23 +1442,22 @@ class ProjectRenderer:
         width = x1 - x0
         height = y1 - y0
         corner = min(width, height) * 0.24
-        x_split_l = x0 + width * 0.48
-        x_split_r = x0 + width * 0.52
-        y_split_t = y0 + height * 0.48
-        y_split_b = y0 + height * 0.52
+        join = max(0.5, thickness * 0.6)
+        mid_x = (x0 + x1) / 2.0
+        mid_y = (y0 + y1) / 2.0
         return [
-            [(x0, y0, x0 + corner, y0 + thickness), (x0, y0, x0 + thickness, y0 + corner)],
-            [(x1 - corner, y0, x1, y0 + thickness), (x1 - thickness, y0, x1, y0 + corner)],
-            [(x1 - thickness, y1 - corner, x1, y1), (x1 - corner, y1 - thickness, x1, y1)],
-            [(x0, y1 - corner, x0 + thickness, y1), (x0, y1 - thickness, x0 + corner, y1)],
-            [(x0 + corner, y0, x_split_l, y0 + thickness)],
-            [(x_split_r, y0, x1 - corner, y0 + thickness)],
-            [(x1 - thickness, y0 + corner, x1, y_split_t)],
-            [(x1 - thickness, y_split_b, x1, y1 - corner)],
-            [(x_split_r, y1 - thickness, x1 - corner, y1)],
-            [(x0 + corner, y1 - thickness, x_split_l, y1)],
-            [(x0, y_split_b, x0 + thickness, y1 - corner)],
-            [(x0, y0 + corner, x0 + thickness, y_split_t)],
+            [(x0, y0, x0 + corner + join, y0 + thickness), (x0, y0, x0 + thickness, y0 + corner + join)],
+            [(x1 - corner - join, y0, x1, y0 + thickness), (x1 - thickness, y0, x1, y0 + corner + join)],
+            [(x1 - thickness, y1 - corner - join, x1, y1), (x1 - corner - join, y1 - thickness, x1, y1)],
+            [(x0, y1 - corner - join, x0 + thickness, y1), (x0, y1 - thickness, x0 + corner + join, y1)],
+            [(x0 + corner - join, y0, mid_x + join, y0 + thickness)],
+            [(mid_x - join, y0, x1 - corner + join, y0 + thickness)],
+            [(x1 - thickness, y0 + corner - join, x1, mid_y + join)],
+            [(x1 - thickness, mid_y - join, x1, y1 - corner + join)],
+            [(mid_x - join, y1 - thickness, x1 - corner + join, y1)],
+            [(x0 + corner - join, y1 - thickness, mid_x + join, y1)],
+            [(x0, mid_y - join, x0 + thickness, y1 - corner + join)],
+            [(x0, y0 + corner - join, x0 + thickness, mid_y + join)],
         ]
 
     @staticmethod
@@ -1470,8 +1473,11 @@ class ProjectRenderer:
         inner_gap = (rail_total_width - trim_width * 2.0 - core_width) / 2.0
         rail_body_top = y0 + 5 * unit
         rail_body_bottom = y1 - 5 * unit
-        rail_left_x0 = x0 + 4 * unit
-        rail_right_x0 = x1 - 4 * unit - rail_total_width
+        touch_overlap = max(0.0, min(thickness * 0.16, unit * 0.25))
+        rail_left_x1 = x0 + touch_overlap
+        rail_left_x0 = rail_left_x1 - rail_total_width
+        rail_right_x0 = x1 - touch_overlap
+        rail_right_x1 = rail_right_x0 + rail_total_width
 
         top_cap_y0 = rail_body_top - 2 * unit
         top_cap_y1 = top_cap_y0 + unit
@@ -1481,12 +1487,22 @@ class ProjectRenderer:
         segment_heights = (3 * unit, 5 * unit, 11 * unit, 3 * unit)
         segment_gap = unit
 
-        def build_rail(rail_x0: float) -> dict[str, list[tuple[float, float, float, float]]]:
-            trim_left = (rail_x0, rail_body_top, rail_x0 + trim_width, rail_body_bottom)
-            core_x0 = rail_x0 + trim_width + inner_gap
+        def build_rail(rail_x0: float, rail_x1: float, inner_side: str) -> dict[str, list[tuple[float, float, float, float]]]:
+            if inner_side == "right":
+                trim_outer = (rail_x0, rail_body_top, rail_x0 + trim_width, rail_body_bottom)
+                trim_inner = (rail_x1 - trim_width, rail_body_top, rail_x1, rail_body_bottom)
+            else:
+                trim_inner = (rail_x0, rail_body_top, rail_x0 + trim_width, rail_body_bottom)
+                trim_outer = (rail_x1 - trim_width, rail_body_top, rail_x1, rail_body_bottom)
+
+            core_x0 = min(trim_outer[2], trim_inner[2]) + inner_gap
             core_x1 = core_x0 + core_width
-            trim_right_x0 = rail_x0 + rail_total_width - trim_width
-            trim_right = (trim_right_x0, rail_body_top, trim_right_x0 + trim_width, rail_body_bottom)
+            if inner_side == "right":
+                core_x0 = trim_outer[2] + inner_gap
+                core_x1 = core_x0 + core_width
+            else:
+                core_x1 = trim_outer[0] - inner_gap
+                core_x0 = core_x1 - core_width
 
             core_segments: list[tuple[float, float, float, float]] = []
             cursor = rail_body_top
@@ -1495,22 +1511,22 @@ class ProjectRenderer:
                 cursor += segment_height + segment_gap
 
             top_caps = [
-                (trim_left[0], top_cap_y0, trim_left[0] + 2 * unit, top_cap_y1),
-                (trim_right[2] - 2 * unit, top_cap_y0, trim_right[2], top_cap_y1),
+                (trim_outer[0], top_cap_y0, trim_outer[0] + 2 * unit, top_cap_y1),
+                (trim_inner[2] - 2 * unit, top_cap_y0, trim_inner[2], top_cap_y1),
             ]
             bottom_caps = [
-                (trim_left[0], bottom_cap_y0, trim_left[0] + 2 * unit, bottom_cap_y1),
-                (trim_right[2] - 2 * unit, bottom_cap_y0, trim_right[2], bottom_cap_y1),
+                (trim_outer[0], bottom_cap_y0, trim_outer[0] + 2 * unit, bottom_cap_y1),
+                (trim_inner[2] - 2 * unit, bottom_cap_y0, trim_inner[2], bottom_cap_y1),
             ]
             return {
-                "trim_pair": [trim_left, trim_right],
+                "trim_pair": [trim_outer, trim_inner],
                 "core_segments": core_segments,
                 "top_caps": top_caps,
                 "bottom_caps": bottom_caps,
             }
 
-        left_rail = build_rail(rail_left_x0)
-        right_rail = build_rail(rail_right_x0)
+        left_rail = build_rail(rail_left_x0, rail_left_x1, "right")
+        right_rail = build_rail(rail_right_x0, rail_right_x1, "left")
 
         return [
             [left_rail["core_segments"][2], right_rail["core_segments"][2]],
@@ -1530,15 +1546,16 @@ class ProjectRenderer:
         x0, y0, x1, y1 = rect
         width = x1 - x0
         height = y1 - y0
+        join = max(0.5, thickness * 0.6)
         return [
-            [(x0 + width * 0.32, y0, x0 + width * 0.68, y0 + thickness)],
-            [(x1 - thickness, y0 + height * 0.12, x1, y0 + height * 0.46)],
-            [(x1 - thickness, y0 + height * 0.46, x1, y1 - height * 0.12)],
-            [(x0 + width * 0.46, y1 - thickness, x1 - width * 0.12, y1)],
-            [(x0 + width * 0.12, y1 - thickness, x0 + width * 0.54, y1)],
-            [(x0, y0 + height * 0.54, x0 + thickness, y1 - height * 0.12)],
-            [(x0, y0 + height * 0.12, x0 + thickness, y0 + height * 0.54)],
-            [(x0 + width * 0.12, y0, x0 + width * 0.32, y0 + thickness)],
+            [(x0 + width * 0.32 - join, y0, x0 + width * 0.68 + join, y0 + thickness)],
+            [(x1 - thickness, y0 + height * 0.12 - join, x1, y0 + height * 0.46 + join)],
+            [(x1 - thickness, y0 + height * 0.46 - join, x1, y1 - height * 0.12 + join)],
+            [(x0 + width * 0.46 - join, y1 - thickness, x1 - width * 0.12 + join, y1)],
+            [(x0 + width * 0.12 - join, y1 - thickness, x0 + width * 0.54 + join, y1)],
+            [(x0, y0 + height * 0.54 - join, x0 + thickness, y1 - height * 0.12 + join)],
+            [(x0, y0 + height * 0.12 - join, x0 + thickness, y0 + height * 0.54 + join)],
+            [(x0 + width * 0.12 - join, y0, x0 + width * 0.32 + join, y0 + thickness)],
         ]
 
     @staticmethod
