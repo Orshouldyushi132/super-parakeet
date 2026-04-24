@@ -98,6 +98,7 @@ class RenderSettings:
     yatsume_size: float = 0.3
     yatsume_duration_sec: float = 0.22
     yatsume_outline_width: float = 1.0
+    yatsume_animation_speed: float = 1.0
     yatsume_position_x: float = 0.5
     yatsume_position_y: float = 0.5
     show_midi_notes: bool = True
@@ -471,7 +472,8 @@ def render_settings_from_mapping(data: Mapping[str, Any] | None) -> RenderSettin
         "canvas_border_width": (0.0, 5.0),
         "yatsume_size": (0.05, 1.2),
         "yatsume_duration_sec": (0.03, 3.0),
-        "yatsume_outline_width": (0.1, 5.0),
+        "yatsume_outline_width": (0.02, 5.0),
+        "yatsume_animation_speed": (0.2, 4.0),
         "yatsume_position_x": (0.0, 1.0),
         "yatsume_position_y": (0.0, 1.0),
         "mad_image_size": (0.05, 2.0),

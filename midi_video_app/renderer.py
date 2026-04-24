@@ -1304,13 +1304,13 @@ class ProjectRenderer:
         center_y = height * _clamp(float(getattr(self.settings, "yatsume_position_y", 0.5)))
         requested_size = max(12.0, min(width, height) * max(0.05, float(getattr(self.settings, "yatsume_size", 0.3))))
         unit = float(max(1, int(round(requested_size / 40.0))))
-        pixel_size = int(unit)
-        stroke_units = max(1, int(round(max(0.35, float(getattr(self.settings, "yatsume_outline_width", 1.0))))))
-        stroke = stroke_units * unit
-        outer_width_units = 32
-        outer_height_units = 38
-        outer_width = outer_width_units * unit
-        outer_height = outer_height_units * unit
+        pixel_size = max(1, int(round(unit * 0.5)))
+        stroke_scale = max(0.02, float(getattr(self.settings, "yatsume_outline_width", 1.0)))
+        stroke = max(float(pixel_size), stroke_scale * unit)
+        outer_size_units = 34
+        outer_size = outer_size_units * unit
+        outer_width = outer_size
+        outer_height = outer_size
         outer_x0 = round((center_x - outer_width / 2.0) / unit) * unit
         outer_y0 = round((center_y - outer_height / 2.0) / unit) * unit
         outer_rect = (
@@ -1323,9 +1323,9 @@ class ProjectRenderer:
         center_y = outer_y0 + outer_height / 2.0
         clap_rect = (
             outer_x0 + 6 * unit,
-            outer_y0 + 7 * unit,
+            outer_y0 + 6 * unit,
             outer_x0 + 26 * unit,
-            outer_y0 + 31 * unit,
+            outer_y0 + 26 * unit,
         )
         cymbal_rect = (
             center_x - 3 * unit,
@@ -1393,7 +1393,8 @@ class ProjectRenderer:
         if elapsed < 0.0 or elapsed > duration_sec:
             return None
 
-        attack_window = min(duration_sec, max(0.045, duration_sec * 0.38))
+        animation_speed = max(0.2, float(getattr(self.settings, "yatsume_animation_speed", 1.0)))
+        attack_window = min(duration_sec, max(0.045, duration_sec * 0.38) / animation_speed)
         progress = _clamp(elapsed / max(attack_window, 1e-6))
         return elapsed, progress
 
@@ -1463,9 +1464,9 @@ class ProjectRenderer:
         thickness: float,
     ) -> list[list[tuple[float, float, float, float]]]:
         x0, y0, x1, y1 = outer_rect
-        trim_width = thickness
-        rail_total_width = 6 * unit
-        core_width = max(2 * unit, thickness)
+        trim_width = max(1.0, thickness)
+        core_width = max(2 * unit, thickness * 1.1)
+        rail_total_width = max(6 * unit, trim_width * 2.0 + core_width + 2.0 * unit)
         inner_gap = (rail_total_width - trim_width * 2.0 - core_width) / 2.0
         rail_body_top = y0 + 5 * unit
         rail_body_bottom = y1 - 5 * unit
