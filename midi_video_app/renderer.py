@@ -1347,7 +1347,7 @@ class ProjectRenderer:
         if hihat_state is not None:
             self._draw_yatsume_block_groups(
                 draw,
-                self._build_yatsume_hihat_groups(center_x, center_y, base_size, line_width),
+                self._build_yatsume_hihat_groups(center_x, center_y, base_size, line_width, pixel_size),
                 outline_fill,
                 pixel_size,
                 hihat_state[1],
@@ -1455,60 +1455,85 @@ class ProjectRenderer:
         center_y: float,
         base_size: float,
         thickness: float,
+        pixel_size: int,
     ) -> list[list[tuple[float, float, float, float]]]:
-        rail_width = max(thickness * 1.35, base_size * 0.085)
-        rail_height = base_size * 0.96
-        rail_offset = base_size * 0.61
-        segment_gap = max(thickness * 0.55, base_size * 0.018)
-        segment_height = (rail_height - segment_gap * 4.0) / 5.0
-        top_y = center_y - rail_height / 2.0
-        cap_width = rail_width * 0.76
-        segment_groups: list[list[tuple[float, float, float, float]]] = []
-        for segment_index in range(5):
-            y0 = top_y + segment_index * (segment_height + segment_gap)
-            y1 = y0 + segment_height
-            segment_pair: list[tuple[float, float, float, float]] = []
-            for direction in (-1.0, 1.0):
-                rail_center_x = center_x + direction * rail_offset
-                segment_pair.append(
-                    (
-                        rail_center_x - rail_width / 2.0,
-                        y0,
-                        rail_center_x + rail_width / 2.0,
-                        y1,
-                    )
-                )
-            segment_groups.append(segment_pair)
+        unit = float(max(1, pixel_size))
+        rail_height_units = max(24, int(round((base_size * 0.96) / unit)))
+        rail_height = rail_height_units * unit
+        rail_offset = max(10, int(round((base_size * 0.61) / unit))) * unit
+        total_width_units = 6
+        trim_width = 1 * unit
+        inner_gap = 1 * unit
+        core_width = 2 * unit
+        total_width = total_width_units * unit
+        top_y = round((center_y - rail_height / 2.0) / unit) * unit
+        body_top = top_y + 2 * unit
+        body_bottom = top_y + rail_height - 2 * unit
+        cap_height = 1 * unit
+        top_cap_y1 = body_top - unit
+        top_cap_y0 = top_cap_y1 - cap_height
+        bottom_cap_y0 = body_bottom + unit
+        bottom_cap_y1 = bottom_cap_y0 + cap_height
+        segment_gap_units = 1
+        segment_weights = [2, 4, 8, 2]
 
-        top_caps: list[tuple[float, float, float, float]] = []
-        bottom_caps: list[tuple[float, float, float, float]] = []
-        for direction in (-1.0, 1.0):
-            rail_center_x = center_x + direction * rail_offset
-            top_caps.append(
-                (
-                    rail_center_x - cap_width / 2.0,
-                    top_y - segment_gap * 0.72,
-                    rail_center_x + cap_width / 2.0,
-                    top_y - segment_gap * 0.18,
-                )
-            )
-            bottom_caps.append(
-                (
-                    rail_center_x - cap_width / 2.0,
-                    top_y + rail_height + segment_gap * 0.18,
-                    rail_center_x + cap_width / 2.0,
-                    top_y + rail_height + segment_gap * 0.72,
-                )
-            )
+        def _segment_units(total_units: int) -> list[int]:
+            usable_units = max(8, total_units - segment_gap_units * (len(segment_weights) - 1))
+            base_units = [max(1, int(round(usable_units * weight / sum(segment_weights)))) for weight in segment_weights]
+            difference = usable_units - sum(base_units)
+            order = [2, 1, 0, 3] if difference >= 0 else [2, 1, 3, 0]
+            while difference != 0:
+                for index in order:
+                    if difference == 0:
+                        break
+                    if difference > 0:
+                        base_units[index] += 1
+                        difference -= 1
+                    elif base_units[index] > 1:
+                        base_units[index] -= 1
+                        difference += 1
+            return base_units
+
+        core_segment_units = _segment_units(int(round((body_bottom - body_top) / unit)))
+
+        def build_rail(rail_center_x: float) -> dict[str, list[tuple[float, float, float, float]]]:
+            x0 = rail_center_x - total_width / 2.0
+            trim_left = (x0, body_top, x0 + trim_width, body_bottom)
+            core_x0 = x0 + trim_width + inner_gap
+            core_x1 = core_x0 + core_width
+            trim_right = (core_x1 + inner_gap, body_top, core_x1 + inner_gap + trim_width, body_bottom)
+
+            core_segments: list[tuple[float, float, float, float]] = []
+            cursor = body_top
+            for segment_units in core_segment_units:
+                segment_height = segment_units * unit
+                core_segments.append((core_x0, cursor, core_x1, cursor + segment_height))
+                cursor += segment_height + segment_gap_units * unit
+
+            return {
+                "trim_pair": [trim_left, trim_right],
+                "core_segments": core_segments,
+                "top_caps": [
+                    (trim_left[0], top_cap_y0, trim_left[2], top_cap_y1),
+                    (trim_right[0], top_cap_y0, trim_right[2], top_cap_y1),
+                ],
+                "bottom_caps": [
+                    (trim_left[0], bottom_cap_y0, trim_left[2], bottom_cap_y1),
+                    (trim_right[0], bottom_cap_y0, trim_right[2], bottom_cap_y1),
+                ],
+            }
+
+        left_rail = build_rail(center_x - rail_offset)
+        right_rail = build_rail(center_x + rail_offset)
 
         return [
-            segment_groups[2],
-            segment_groups[1],
-            segment_groups[3],
-            segment_groups[0],
-            segment_groups[4],
-            top_caps,
-            bottom_caps,
+            [left_rail["core_segments"][2], right_rail["core_segments"][2]],
+            [left_rail["core_segments"][1], right_rail["core_segments"][1]],
+            [left_rail["core_segments"][0], right_rail["core_segments"][0]],
+            [left_rail["core_segments"][3], right_rail["core_segments"][3]],
+            left_rail["trim_pair"] + right_rail["trim_pair"],
+            left_rail["top_caps"] + right_rail["top_caps"],
+            left_rail["bottom_caps"] + right_rail["bottom_caps"],
         ]
 
     @staticmethod
