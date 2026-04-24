@@ -939,23 +939,10 @@ class MidiVideoApp:
             self._yatsume_note_combos[role_key] = combo
 
         row += 1
-        ttk.Label(panel, text="ピアノロールをクリックしたときの割り当て先").grid(row=row, column=0, columnspan=4, sticky="w", pady=(12, 0))
-
-        row += 1
-        role_frame = ttk.Frame(panel)
-        role_frame.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(6, 0))
-        for index, (role_label, role_key, _variable) in enumerate(note_rows):
-            ttk.Radiobutton(role_frame, text=role_label, value=role_key, variable=self.yatsume_assign_role_var).grid(
-                row=0,
-                column=index,
-                sticky="w",
-                padx=(0 if index == 0 else 10, 0),
-            )
-
         row += 1
         ttk.Label(
             panel,
-            text="上が高いキー、下が低いキーです。左のラベル列をクリックすると選択中の役割へそのキーをセットし、右のノーツ列をクリックするとその時間へプレビュー移動できます。",
+            text="上が高いキー、下が低いキーです。各パーツの担当キーは上のプルダウンで決めて、下のピアノロールはノート位置の確認とプレビュー移動に使います。",
             style="Muted.TLabel",
             wraplength=340,
             justify="left",
@@ -1615,17 +1602,11 @@ class MidiVideoApp:
         self._yatsume_piano_rows = []
 
         canvas.create_rectangle(0, 0, width, height, fill="#081018", outline="")
-        role_names = {
-            "kick": "キック",
-            "hihat": "ハイハット",
-            "clap": "クラップ",
-            "cymbal": "シンバル",
-        }
         canvas.create_text(
             10,
             6,
             anchor="nw",
-            text=f"クリック先: {role_names.get(self.yatsume_assign_role_var.get(), self.yatsume_assign_role_var.get())}",
+            text="ピアノロール / クリックとドラッグでプレビュー移動",
             fill="#f5f7fb",
             font=("Yu Gothic UI Semibold", 10),
         )
@@ -1670,13 +1651,7 @@ class MidiVideoApp:
         if self._yatsume_roll_left <= event.x <= self._yatsume_roll_right:
             roll_width = max(1.0, self._yatsume_roll_right - self._yatsume_roll_left)
             self._seek_preview_to_ratio((event.x - self._yatsume_roll_left) / roll_width)
-            return
-        for y0, y1, note_number in self._yatsume_piano_rows:
-            if y0 <= event.y <= y1:
-                role = self.yatsume_assign_role_var.get()
-                if role in self._yatsume_field_by_role:
-                    self._set_yatsume_role_note(role, note_number)
-                return
+        return
 
     def _on_yatsume_piano_roll_dragged(self, event) -> None:
         if self._yatsume_roll_left <= event.x <= self._yatsume_roll_right:
